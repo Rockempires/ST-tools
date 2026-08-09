@@ -1,0 +1,3 @@
+> 离线翻译模型下载地址：下载后存放于 `ComfyUI\custom_nodes\ST_tools\models` 中
+> - 英文翻译中文模型：https://data.argosopentech.com/argospm/v1/translate-en_zh-1_9.argosmodel
+> - 中文翻译英文模型：https://data.argosopentech.com/argospm/v1/translate-zh_en-1_9.argosmodel
