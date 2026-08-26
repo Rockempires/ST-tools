@@ -7,6 +7,7 @@ from .model_nodes import ST_ModelsLoader
 from .lora_nodes import ST_LoraStack
 from .sampler_nodes import ST_KSamplerWithVAE
 from .clip_nodes import ST_CLIPTextEncoder
+from .dlssnr_nodes import ST_DLSSNRImage, ST_DLSSNRVideo, ST_DLSSNRRuntimeInfo
 
 __all__ = [
     "ST_ModelsLoader",
@@ -18,5 +19,8 @@ __all__ = [
     "ST_FilterShader",
     "ST_ImageEditor",
     "ST_ImageSizeAligner",
-    "ST_OfflineTranslator"
+    "ST_OfflineTranslator",
+    "ST_DLSSNRImage",
+    "ST_DLSSNRVideo",
+    "ST_DLSSNRRuntimeInfo",
 ]
