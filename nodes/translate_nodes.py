@@ -196,7 +196,7 @@ class ST_OfflineTranslator:
 
     RETURN_TYPES = ("STRING",)
     FUNCTION = "translate"
-    CATEGORY = "🎯 石头工具"
+    CATEGORY = "🎯 石头工具/文本编辑"
     DESCRIPTION = "离线翻译节点，支持中文、英语和苗语之间的相互翻译"
 
     def translate(self, 文本, 源语言, 目标语言):

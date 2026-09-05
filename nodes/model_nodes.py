@@ -35,7 +35,7 @@ class ST_ModelsLoader:
     RETURN_TYPES = ("MODEL", "CLIP", "VAE")
     RETURN_NAMES = ("模型", "CLIP", "VAE")
     FUNCTION = "load_models"
-    CATEGORY = "🎯 石头工具"
+    CATEGORY = "🎯 石头工具/基础流程"
     DESCRIPTION = "同时加载UNET、CLIP和VAE模型。"
 
     def load_models(self, **kwargs):

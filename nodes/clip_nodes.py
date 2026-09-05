@@ -22,7 +22,7 @@ class ST_CLIPTextEncoder:
     RETURN_TYPES = ("CONDITIONING", "CONDITIONING", "CONDITIONING")
     RETURN_NAMES = ("正面条件", "负面条件", "负面条件零化")
     FUNCTION = "encode"
-    CATEGORY = "🎯 石头工具"
+    CATEGORY = "🎯 石头工具/基础流程"
     DESCRIPTION = "合并CLIP文本编码功能，同时处理正向和负向提示词。"
 
     def encode(self, CLIP, 正向提示词, 负向提示词):

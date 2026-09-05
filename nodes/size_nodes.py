@@ -1,15 +1,45 @@
+"""
+图像尺寸节点（ST_ImageMaskLatentSize）
+
+职责：接收图像/遮罩/latent（全部 optional，至少接一个），输出对齐 vae_unit 后的图像、遮罩、latent 和最终宽高。
+
+尺寸确定优先级：
+    自定义尺寸（自定义尺寸=true） > 预设比例（预设比例≠关闭）
+    > 图像输入尺寸 > latent 输入尺寸 > 兜底 1024×1024
+确定后统一对齐到 vae_unit 倍数。
+
+输入处理优先级：
+    图像输入 > latent 输入。图像路径内部根据缩放方式不同：
+        中心裁剪 → 按目标宽高比裁剪中心 → resize 到目标尺寸
+        等比缩放 → 以原始图像尺寸 × 缩放倍数（忽略预设/自定义尺寸）
+    latent 路径同理：
+        中心裁剪 → 按目标比例裁剪 latent 网格 → bilinear 到目标 latent 尺寸
+        等比缩放 → latent 原始空间尺寸 × 倍数
+
+vae_unit 来源优先级：latent["downscale_ratio_spacial"] > VAE.downscale_ratio > 兜底 8
+latent 通道数来源：latent["samples"].shape[1] > 兜底 4
+
+遮罩处理：
+    有遮罩输入 → 与图像做完全相同的 resize/crop
+    无遮罩输入 → 创建全白遮罩
+
+latent 路径（无图像输入）：
+    对齐后用 torch.zeros 创建空 latent，shape = [B, channels, H/vae_unit, W/vae_unit]
+"""
+
 import torch
 import numpy as np
+import math
 from PIL import Image
 from ..config.presets import PRESETS, get_size_from_preset
 
+
 class ST_ImageMaskLatentSize:
-    """图像尺寸节点 - 处理图像、遮罩和Latent的尺寸调整"""
+    """图像尺寸节点：统一处理图像/遮罩/latent 尺寸，按 VAE 下采样倍率对齐。"""
     DISPLAY_NAME = "图像尺寸"
     
     @classmethod
     def INPUT_TYPES(cls):
-        """定义节点输入参数"""
         ratio_options = [name for name, size in PRESETS]
         
         return {
@@ -32,250 +62,260 @@ class ST_ImageMaskLatentSize:
     RETURN_TYPES = ("IMAGE", "MASK", "LATENT", "INT", "INT")
     RETURN_NAMES = ("图像", "遮罩", "latent", "宽度", "高度")
     FUNCTION = "run"
-    CATEGORY = "🎯 石头工具"
-    DESCRIPTION = '处理优先级：\n 1. 尺寸设置优先级：自定义尺寸 > 预设尺寸 > 图像输出尺寸 > Latent 输入尺寸\n 2. 输入处理优先级：图像/遮罩输入 > Latent 输入\n处理方法：\n 中心裁剪：按目标比例裁剪中心调整大小\n 等比缩放：按目标比例乘以倍数等比缩放\n Latent：按目标比例调整大小（尺寸÷8）\n 遮罩不存在时：创建全白遮罩'
+    CATEGORY = "🎯 石头工具/图像编辑"
+    DESCRIPTION = '处理优先级：\n 1. 尺寸优先级：自定义尺寸 > 预设尺寸 > 图像输出尺寸 > Latent 输入尺寸\n 2. 输入处理优先级：图像/遮罩输入 > Latent 输入\n处理方法：\n 中心裁剪：按目标比例裁剪中心调整大小\n 等比缩放：按目标比例乘以倍数等比缩放\n Latent：按目标比例调整大小（按VAE下采样倍率对齐）\n 遮罩不存在时：创建全白遮罩'
+
+    @staticmethod
+    def _resolve_vae_unit_and_channels(kwargs):
+        """
+        解析 vae_unit 和 latent_channels。
+        优先级：latent["downscale_ratio_spacial"] > VAE.downscale_ratio > 兜底 8/4
+        """
+        vae_unit = 8
+        latent_channels = 4
+        
+        latent_in = kwargs.get("latent")
+        vae = kwargs.get("vae")
+        
+        # latent 自带最准的信息
+        if latent_in is not None:
+            vae_unit = int(latent_in.get("downscale_ratio_spacial", vae_unit))
+            if "samples" in latent_in and latent_in["samples"].dim() == 4:
+                latent_channels = int(latent_in["samples"].shape[1])
+        
+        # VAE 可补充（latent 没带时）
+        if vae is not None:
+            vae_unit = int(getattr(vae, "downscale_ratio", vae_unit))
+        
+        # 防御
+        if not isinstance(vae_unit, int) or vae_unit <= 0:
+            vae_unit = 8
+        
+        return vae_unit, latent_channels
+
+    @staticmethod
+    def _align_to_vae_unit(size, vae_unit):
+        return math.ceil(size / vae_unit) * vae_unit
 
     def run(self, **kwargs):
-        """执行尺寸调整操作"""
+        """主入口：确定目标尺寸 → 按输入类型分发处理。"""
         try:
-            # 获取输入参数
+            vae_unit, latent_channels = self._resolve_vae_unit_and_channels(kwargs)
+            
             use_custom = kwargs["自定义尺寸"]
             ratio_name = kwargs["预设比例"]
             width = kwargs["宽度"]
             height = kwargs["高度"]
             缩放方式 = kwargs["缩放方式"]
             缩放倍数 = kwargs["缩放倍数"]
-            vae = kwargs.get("vae", None)
+            vae = kwargs.get("vae")
             
-            # 检查输入类型
-            has_image = "图像" in kwargs and kwargs["图像"] is not None
-            has_latent = "latent" in kwargs and kwargs["latent"] is not None
-            has_vae = vae is not None
+            has_image = kwargs.get("图像") is not None
+            has_latent = kwargs.get("latent") is not None
 
-            # 确定目标尺寸
-            target_width, target_height = self._determine_target_size(kwargs, use_custom, ratio_name, width, height, has_image, has_latent)
+            # 1. 确定目标尺寸（统一对齐 vae_unit）
+            target_width, target_height = self._determine_target_size(
+                kwargs, use_custom, ratio_name, width, height, has_image, has_latent, vae_unit
+            )
 
-            # 根据输入类型执行不同的处理
+            # 2. 按输入类型分发
             if has_image:
-                if has_vae:
-                    # 有图像和VAE输入，使用VAE对图像进行编码
-                    return self._process_image_with_vae(kwargs, target_width, target_height, 缩放方式, vae)
-                else:
-                    # 只有图像输入，使用基本处理方式
-                    return self._process_image(kwargs, target_width, target_height, 缩放方式)
-            elif has_latent:
-                # 处理Latent输入
-                return self._process_latent(kwargs, target_width, target_height, 缩放方式, 缩放倍数)
-            else:
-                # 无输入，仅返回尺寸
-                latent = {
-                    "samples": torch.zeros((1, 4, target_height // 8, target_width // 8)),
-                    "downscale_ratio_spacial": 8
-                }
-                return (None, None, latent, target_width, target_height)
+                if vae is not None:
+                    return self._process_image_with_vae(
+                        kwargs, target_width, target_height, 缩放方式, vae, vae_unit, latent_channels
+                    )
+                return self._process_image(
+                    kwargs, target_width, target_height, 缩放方式, vae_unit, latent_channels
+                )
+            if has_latent:
+                return self._process_latent(
+                    kwargs, target_width, target_height, 缩放方式, 缩放倍数, vae_unit
+                )
+            
+            # 无任何输入：仅返回尺寸对齐后的空 latent
+            latent = {
+                "samples": torch.zeros((1, latent_channels,
+                    target_height // vae_unit, target_width // vae_unit)),
+                "downscale_ratio_spacial": vae_unit
+            }
+            return (None, None, latent, target_width, target_height)
+        
         except Exception as e:
-            # 错误处理
             print(f"处理尺寸时出错: {e}")
-            # 返回默认值
             latent = {
                 "samples": torch.zeros((1, 4, 1024 // 8, 1024 // 8)),
                 "downscale_ratio_spacial": 8
             }
             return (None, None, latent, 1024, 1024)
 
-    def _determine_target_size(self, kwargs, use_custom, ratio_name, width, height, has_image, has_latent):
-        """根据优先级确定目标尺寸"""
+    def _determine_target_size(self, kwargs, use_custom, ratio_name, width, height, has_image, has_latent, vae_unit):
+        """确定目标尺寸，优先级：自定义 > 预设 > 图像 > latent > 兜底。最后统一对齐 vae_unit。"""
         if use_custom:
-            # 优先使用自定义尺寸
-            target_width = width
-            target_height = height
+            target_width, target_height = width, height
         elif ratio_name != "关闭":
-            # 其次使用预设尺寸
             target_width, target_height = get_size_from_preset(ratio_name)
         elif has_image:
-            # 再次使用图像本身尺寸
-            batch_size, img_height, img_width, channels = kwargs["图像"].shape
-            target_width = img_width
-            target_height = img_height
+            _, img_h, img_w, _ = kwargs["图像"].shape
+            target_width, target_height = img_w, img_h
         elif has_latent:
-            # 然后使用latent尺寸（乘以8，因为latent尺寸是实际尺寸的1/8）
-            latent = kwargs["latent"]
-            batch_size, channels, latent_height, latent_width = latent["samples"].shape
-            target_width = latent_width * 8
-            target_height = latent_height * 8
+            samples = kwargs["latent"]["samples"]
+            target_width = samples.shape[-1] * vae_unit
+            target_height = samples.shape[-2] * vae_unit
         else:
-            # 最后使用默认尺寸
-            target_width, target_height = 1024, 1024
+            target_width = target_height = 1024
         
-        # 确保尺寸有效
-        target_width = max(64, min(8192, target_width))
-        target_height = max(64, min(8192, target_height))
+        # 限幅 + 对齐
+        target_width  = self._align_to_vae_unit(max(64, min(8192, target_width)), vae_unit)
+        target_height = self._align_to_vae_unit(max(64, min(8192, target_height)), vae_unit)
         
         return target_width, target_height
 
-    def _process_image(self, kwargs, target_width, target_height, 缩放方式):
-        """处理图像和遮罩"""
+    def _process_image(self, kwargs, target_width, target_height, 缩放方式, vae_unit, latent_channels):
+        """图像 + 遮罩 resize/crop（无 VAE 编码路径），最后创建空 latent。"""
         image = kwargs["图像"]
-        mask = kwargs.get("遮罩", None)
+        mask = kwargs.get("遮罩")
         缩放倍数 = kwargs.get("缩放倍数", 1.0)
 
-        batch_size, height1, width1, channels = image.shape
-        new_images = []
-        new_masks = []
-
-        # 计算缩放后的尺寸
+        batch_size, height1, width1, _ = image.shape
+        
+        # 确定处理后尺寸
         if 缩放方式 == "等比缩放":
-            # 等比缩放：以原始尺寸为基准
+            # 以原始图像尺寸为基准乘倍数（忽略预设/自定义尺寸）
             scaled_width = int(width1 * 缩放倍数)
             scaled_height = int(height1 * 缩放倍数)
         else:
-            # 中心裁剪：使用目标尺寸
-            scaled_width = target_width
-            scaled_height = target_height
+            scaled_width, scaled_height = target_width, target_height
 
+        new_images, new_masks = [], []
         for i in range(batch_size):
-            # 处理图像
-            img = image[i]
-            pil_img = Image.fromarray(np.clip(255. * img.cpu().numpy(), 0, 255).astype(np.uint8))
-            
-            # 执行缩放或裁剪
+            # 图像 → PIL → resize/crop → tensor
+            img = Image.fromarray(np.clip(255. * image[i].cpu().numpy(), 0, 255).astype(np.uint8))
             if 缩放方式 == "中心裁剪":
-                # 中心裁剪并调整大小
-                pil_img = self._center_crop(pil_img, scaled_width, scaled_height, width1, height1)
-                pil_img = pil_img.resize((scaled_width, scaled_height), Image.LANCZOS)
-            elif 缩放方式 == "等比缩放":
-                # 等比缩放
-                pil_img = pil_img.resize((scaled_width, scaled_height), Image.LANCZOS)
-            
-            new_img = np.array(pil_img).astype(np.float32) / 255.0
-            new_images.append(new_img)
+                img = self._center_crop(img, scaled_width, scaled_height, width1, height1)
+            img = img.resize((scaled_width, scaled_height), Image.LANCZOS)
+            new_images.append(np.array(img).astype(np.float32) / 255.0)
 
-            # 处理遮罩
+            # 遮罩（有遮罩 → 做相同处理；无遮罩 → 全白）
             if mask is not None:
-                # 处理现有遮罩
-                m = mask[i]
-                pil_mask = Image.fromarray(np.clip(255. * m.cpu().numpy(), 0, 255).astype(np.uint8))
-                
-                # 执行与图像相同的处理
+                m = Image.fromarray(np.clip(255. * mask[i].cpu().numpy(), 0, 255).astype(np.uint8))
                 if 缩放方式 == "中心裁剪":
-                    pil_mask = self._center_crop(pil_mask, scaled_width, scaled_height, width1, height1)
-                    pil_mask = pil_mask.resize((scaled_width, scaled_height), Image.LANCZOS)
-                elif 缩放方式 == "等比缩放":
-                    pil_mask = pil_mask.resize((scaled_width, scaled_height), Image.LANCZOS)
-                
-                new_mask = np.array(pil_mask).astype(np.float32) / 255.0
+                    m = self._center_crop(m, scaled_width, scaled_height, width1, height1)
+                m = m.resize((scaled_width, scaled_height), Image.LANCZOS)
+                new_masks.append(np.array(m).astype(np.float32) / 255.0)
             else:
-                # 创建全白遮罩
-                new_mask = np.ones((scaled_height, scaled_width), dtype=np.float32)
-            
-            new_masks.append(new_mask)
+                new_masks.append(np.ones((scaled_height, scaled_width), dtype=np.float32))
 
-        # 转换为张量
         new_image = torch.tensor(np.stack(new_images, axis=0))
         new_mask = torch.tensor(np.stack(new_masks, axis=0))
         
-        # 创建latent结构
-        batch_size = new_image.shape[0]
+        # 最后对齐一次 vae_unit（PIL resize 结果可能没对齐）
+        out_w = self._align_to_vae_unit(scaled_width, vae_unit)
+        out_h = self._align_to_vae_unit(scaled_height, vae_unit)
+        if out_w != scaled_width or out_h != scaled_height:
+            new_image = self._resize_image_tensor(new_image, out_w, out_h)
+            new_mask = self._resize_mask_tensor(new_mask, out_w, out_h)
+            scaled_width, scaled_height = out_w, out_h
+        
         latent = {
-            "samples": torch.zeros((batch_size, 4, scaled_height // 8, scaled_width // 8), device=new_image.device),
-            "downscale_ratio_spacial": 8
+            "samples": torch.zeros((new_image.shape[0], latent_channels,
+                scaled_height // vae_unit, scaled_width // vae_unit), device=new_image.device),
+            "downscale_ratio_spacial": vae_unit
         }
         
         return (new_image, new_mask, latent, scaled_width, scaled_height)
 
-    def _process_image_with_vae(self, kwargs, target_width, target_height, 缩放方式, vae):
-        """处理图像并使用VAE编码"""
-        # 先处理图像
-        new_image, new_mask, _, scaled_width, scaled_height = self._process_image(kwargs, target_width, target_height, 缩放方式)
+    def _process_image_with_vae(self, kwargs, target_width, target_height, 缩放方式, vae, vae_unit, latent_channels):
+        """先走 _process_image（图像+遮罩），再用 VAE encode 生成原生 latent。"""
+        new_image, new_mask, _, scaled_width, scaled_height = self._process_image(
+            kwargs, target_width, target_height, 缩放方式, vae_unit, latent_channels
+        )
         
-        # 使用VAE编码
-        encoded_latent = vae.encode(new_image)
-        
-        # 创建latent结构
         latent = {
-            "samples": encoded_latent,
-            "downscale_ratio_spacial": 8
+            "samples": vae.encode(new_image),
+            "downscale_ratio_spacial": vae_unit
         }
         
         return (new_image, new_mask, latent, scaled_width, scaled_height)
 
-    def _process_latent(self, kwargs, target_width, target_height, 缩放方式, 缩放倍数):
-        """处理Latent尺寸"""
+    def _process_latent(self, kwargs, target_width, target_height, 缩放方式, 缩放倍数, vae_unit):
+        """latent 输入路径：等比缩放或中心裁剪 latent 网格。"""
         latent = kwargs["latent"]
-        new_latent = {}
+        batch_size, channels, latent_h, latent_w = latent["samples"].shape
         
         if 缩放方式 == "等比缩放":
-            # 等比缩放Latent
-            batch_size, channels, latent_height, latent_width = latent["samples"].shape
-            original_width = latent_width * 8
-            original_height = latent_height * 8
+            # 以 latent 原始空间尺寸 × 倍数（忽略预设/自定义尺寸）
+            orig_w = latent_w * vae_unit
+            orig_h = latent_h * vae_unit
+            scaled_w = self._align_to_vae_unit(int(orig_w * 缩放倍数), vae_unit)
+            scaled_h = self._align_to_vae_unit(int(orig_h * 缩放倍数), vae_unit)
             
-            # 计算缩放后的尺寸
-            scaled_width = int(original_width * 缩放倍数)
-            scaled_height = int(original_height * 缩放倍数)
-            
-            # 调整latent尺寸
-            new_latent["samples"] = torch.nn.functional.interpolate(
+            new_samples = torch.nn.functional.interpolate(
                 latent["samples"],
-                size=(scaled_height // 8, scaled_width // 8),
-                mode="bilinear",
-                align_corners=False
+                size=(scaled_h // vae_unit, scaled_w // vae_unit),
+                mode="bilinear", align_corners=False
             )
-            new_latent["downscale_ratio_spacial"] = 8
-            
-            return (None, None, new_latent, scaled_width, scaled_height)
+            return (None, None, {"samples": new_samples, "downscale_ratio_spacial": vae_unit}, scaled_w, scaled_h)
+        
+        # 中心裁剪：先按目标比例裁 latent 网格，再 bilinear 到目标尺寸
+        orig_w = latent_w * vae_unit
+        orig_h = latent_h * vae_unit
+        target_ratio = target_width / target_height
+        orig_ratio = orig_w / orig_h
+        
+        if orig_ratio > target_ratio:
+            new_w = int(orig_h * target_ratio)
+            lw = new_w // vae_unit
+            sx = (latent_w - lw) // 2
+            cropped = latent["samples"][:, :, :, sx:sx + lw]
         else:
-            # 中心裁剪Latent
-            batch_size, channels, latent_height, latent_width = latent["samples"].shape
-            original_width = latent_width * 8
-            original_height = latent_height * 8
-            
-            # 计算目标宽高比
-            target_aspect_ratio = target_width / target_height
-            original_aspect_ratio = original_width / original_height
-            
-            # 裁剪Latent
-            if original_aspect_ratio > target_aspect_ratio:
-                # 宽度过大，裁剪宽度
-                new_width = int(original_height * target_aspect_ratio)
-                new_width_latent = new_width // 8
-                start_x = (latent_width - new_width_latent) // 2
-                cropped_latent = latent["samples"][:, :, :, start_x:start_x + new_width_latent]
-            else:
-                # 高度过大，裁剪高度
-                new_height = int(original_width / target_aspect_ratio)
-                new_height_latent = new_height // 8
-                start_y = (latent_height - new_height_latent) // 2
-                cropped_latent = latent["samples"][:, :, start_y:start_y + new_height_latent, :]
-            
-            # 调整到目标尺寸
-            new_latent["samples"] = torch.nn.functional.interpolate(
-                cropped_latent,
-                size=(target_height // 8, target_width // 8),
-                mode="bilinear",
-                align_corners=False
-            )
-            new_latent["downscale_ratio_spacial"] = 8
-            
-            return (None, None, new_latent, target_width, target_height)
+            new_h = int(orig_w / target_ratio)
+            lh = new_h // vae_unit
+            sy = (latent_h - lh) // 2
+            cropped = latent["samples"][:, :, sy:sy + lh, :]
+        
+        new_samples = torch.nn.functional.interpolate(
+            cropped,
+            size=(target_height // vae_unit, target_width // vae_unit),
+            mode="bilinear", align_corners=False
+        )
+        return (None, None, {"samples": new_samples, "downscale_ratio_spacial": vae_unit}, target_width, target_height)
 
-    def _center_crop(self, img, target_width, target_height, original_width, original_height):
-        """中心裁剪图像到目标比例"""
+    @staticmethod
+    def _center_crop(img, target_width, target_height, original_width, original_height):
+        """PIL 图像的中心裁剪。按目标宽高比裁掉长边多余部分。"""
         aspect_ratio = target_width / target_height
         img_ratio = original_width / original_height
         
         if img_ratio > aspect_ratio:
-            # 宽度过大，裁剪宽度
+            # 宽度过大 → 裁宽度
             new_width = int(original_height * aspect_ratio)
             left = (original_width - new_width) // 2
             return img.crop((left, 0, left + new_width, original_height))
-        else:
-            # 高度过大，裁剪高度
-            new_height = int(original_width / aspect_ratio)
-            top = (original_height - new_height) // 2
-            return img.crop((0, top, original_width, top + new_height))
+        
+        # 高度过大 → 裁高度
+        new_height = int(original_width / aspect_ratio)
+        top = (original_height - new_height) // 2
+        return img.crop((0, top, original_width, top + new_height))
 
-# 注册节点
+    @staticmethod
+    def _resize_image_tensor(tensor, width, height):
+        """[B,H,W,C] → bilinear → [B,H,W,C]"""
+        t = tensor.movedim(-1, 1)
+        resized = torch.nn.functional.interpolate(
+            t, size=(height, width), mode="bilinear", align_corners=False
+        )
+        return resized.movedim(1, -1)
+
+    @staticmethod
+    def _resize_mask_tensor(mask, width, height):
+        """[B,H,W] → unsqueeze → bilinear → squeeze → [B,H,W]"""
+        t = mask.unsqueeze(1)
+        resized = torch.nn.functional.interpolate(
+            t, size=(height, width), mode="bilinear", align_corners=False
+        )
+        return resized.squeeze(1)
+
+
 NODE_CLASS_MAPPINGS = {
     "ST_ImageMaskLatentSize": ST_ImageMaskLatentSize
 }

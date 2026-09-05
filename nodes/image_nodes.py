@@ -38,7 +38,7 @@ class ST_ImagePostProcessing:
 
     RETURN_TYPES = ("IMAGE",)
     FUNCTION = "run"
-    CATEGORY = "🎯 石头工具"
+    CATEGORY = "🎯 石头工具/图像编辑"
     DESCRIPTION = "说明：所有参数范围为0.0-2.0，1.0为默认值（不改画面），步数为0.01\n\n图像：输入的图像\n亮度：调整图像明暗程度\n对比度：调整图像明暗对比\n饱和度：调整图像色彩鲜艳程度\nGamma：调整图像亮度曲线\n红色_青色：调整红色和青色平衡\n绿色_洋红：调整绿色和洋红平衡\n蓝色_黄色：调整蓝色和黄色平衡\n模糊_锐化：值<1为模糊，值>1为锐化\nHDR强度：增强局部对比度，保留更多细节（1.0保持原图，1-2增加HDR强度\n自适应画质增强：增强图像边缘和纹理细节"
 
     def run(self, 图像, 亮度, 对比度, 饱和度, Gamma, 红色_青色, 绿色_洋红, 蓝色_黄色, 模糊_锐化, HDR强度, 自适应画质增强, unique_id, save_preview=True, return_ui=True):

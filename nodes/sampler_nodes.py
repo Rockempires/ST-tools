@@ -37,7 +37,7 @@ class ST_KSamplerWithVAE:
 
     RETURN_TYPES = ("LATENT", "IMAGE")
     FUNCTION = "run"
-    CATEGORY = "🎯 石头工具"
+    CATEGORY = "🎯 石头工具/基础流程"
     DESCRIPTION = "集成K采样器和VAE解码功能，一步生成图像。"
 
     def run(self, 模型, 种子, 步数, CFG, 采样器名称, 调度器, 正面条件, 负面条件, Latent, 降噪, VAE, unique_id, save_preview=True, return_ui=True):

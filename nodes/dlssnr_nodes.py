@@ -279,7 +279,7 @@ class ST_DLSSNRImage:
     RETURN_TYPES = ("IMAGE",)
     RETURN_NAMES = ("图像",)
     FUNCTION = "run"
-    CATEGORY = "🎯 石头工具/DLSS超分"
+    CATEGORY = "🎯 石头工具/DLSS渲染"
 
     @classmethod
     def VALIDATE_INPUTS(cls, **kwargs):
@@ -349,7 +349,7 @@ class ST_DLSSNRVideo:
     RETURN_TYPES = ("IMAGE", "VIDEO")
     RETURN_NAMES = ("图像序列", "视频")
     FUNCTION = "run"
-    CATEGORY = "🎯 石头工具/DLSS超分"
+    CATEGORY = "🎯 石头工具/DLSS渲染"
 
     @classmethod
     def VALIDATE_INPUTS(cls, **kwargs):
@@ -450,7 +450,7 @@ class ST_DLSSNRRuntimeInfo:
     RETURN_TYPES = ("STRING",)
     RETURN_NAMES = ("检测信息",)
     FUNCTION = "info"
-    CATEGORY = "🎯 石头工具/DLSS超分"
+    CATEGORY = "🎯 石头工具/DLSS渲染"
     OUTPUT_NODE = True
     DESCRIPTION = "跑一个微型测试任务，报告本机神经渲染是否可用及当前使用的光流后端。"
 

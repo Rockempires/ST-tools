@@ -47,7 +47,7 @@ class ST_LoraStack:
     # 定义节点的主要函数
     FUNCTION = "load_loras"
     # 定义节点的分类
-    CATEGORY = "🎯 石头工具"
+    CATEGORY = "🎯 石头工具/基础流程"
     # 定义节点的描述
     DESCRIPTION = "同时加载多个Lora模型到模型和CLIP中。"
 
