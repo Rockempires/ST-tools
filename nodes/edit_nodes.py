@@ -177,7 +177,7 @@ class ST_ImageEditor(io.ComfyNode):
         )
 
     @classmethod
-    def execute(cls, clip, vae, 图片, mask, 正面提示词, 负面提示词, 对齐模式, 生成图像宽度, 生成图像高度) -> io.NodeOutput:
+    def execute(cls, clip, vae, 图片, mask=None, 正面提示词="", 负面提示词="", 对齐模式="flux2klein", 生成图像宽度=1024, 生成图像高度=1024) -> io.NodeOutput:
         input_images = list(图片.values())
 
         if 对齐模式 == "flux2klein":
