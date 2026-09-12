@@ -13,9 +13,14 @@ ST_ImageEditor：
         latent shape = ceil(ref/vae_unit) * vae_unit → 与采样器目标尺寸精确匹配
     
     补边策略：
-        画布（采样器目标）按 ref 外框对齐 vae_unit；
+        画布（采样器目标）按 ref 对齐 vae_unit；
         图像 fit-within 保持宽高比不变形，右下留白 → 黑色补边；
         pad_info 记录右下补边量，供 ST_ImageSizeAligner 裁剪还原。
+
+    遮罩（可选输入 mask，仅作用于主图）：
+        与主图共享 fit-within + 补边几何，nearest 缩放保 {0,1} 二值；
+        白色区域重绘、黑色及右下补边区（=0）保留；
+        写入输出 latent["noise_mask"]，采样器只在遮罩内加噪重绘。
 
 ST_ImageSizeAligner：
     接收 pad_info + KSampler 输出图像，裁剪掉右下补边区域，还原 fit-within 尺寸。
@@ -111,6 +116,31 @@ def _prepare_reference_latent(samples, ref_width, ref_height, vae_unit, vae):
             scaled_width, scaled_height, canvas_width, canvas_height, scale_by)
 
 
+def _build_noise_mask(mask, scaled_width, scaled_height, canvas_width, canvas_height, vae_unit, latent_dim):
+    """
+    输入遮罩 → 采样器 noise_mask，与主图共享同一套 fit-within + 补边几何。
+
+    流程：nearest 缩放到 fit-within 尺寸（保 {0,1} 不产生灰边）→ 左上放入黑色画布
+    （右下补边区保持 0，不参与重绘）→ nearest 缩到 latent 网格 → round 二值化。
+    返回形状对齐 latent：4D→[1,1,lh,lw]，5D→[1,1,1,lh,lw]（核心 reshape_mask 约定）。
+    """
+    m = mask[0] if mask.dim() == 3 else mask  # 取主图遮罩 [H,W]
+    m = torch.nn.functional.interpolate(
+        m[None, None].float(), size=(scaled_height, scaled_width), mode="nearest"
+    )[0, 0]
+
+    canvas_m = torch.zeros((canvas_height, canvas_width), dtype=m.dtype, device=m.device)
+    canvas_m[:scaled_height, :scaled_width] = m
+
+    grid = torch.nn.functional.interpolate(
+        canvas_m[None, None],
+        size=(canvas_height // vae_unit, canvas_width // vae_unit),
+        mode="nearest"
+    )[0, 0].round()
+
+    return grid[None, None, None] if latent_dim == 5 else grid[None, None]
+
+
 class ST_ImageEditor(io.ComfyNode):
     """图像编辑节点：把输入图像编码为 CLIP conditioning + reference_latents + pad_info。"""
     
@@ -125,11 +155,13 @@ class ST_ImageEditor(io.ComfyNode):
             node_id="ST_ImageEditor",
             display_name="编辑图像",
             category="🎯 石头工具/图像编辑",
-            description="图像编辑节点，用于将输入图像编码为条件向量和潜空间表示，支持多种对齐模式。\n\n功能特性：\n- 动态输入：支持1-10张图片，接入后自动显示新输入点\n- 三种对齐模式：\n  - flux2klein：Flux2模型标准模式（仅参考潜空间）\n  - qwenedit：Qwen模型编辑模式（视觉编码+参考潜空间）\n  - boogu：Boogu图像编辑模式（视觉编码+参考潜空间）\n- 等比缩放：等比适配目标宽高，兰佐斯插值\n- 自动补边：填充至VAE对齐尺寸（按VAE下采样倍率对齐）\n\n输出：\n- 正面输出：正面提示词编码\n- 负面输出：负面提示词编码\n- latent：参考图像的潜空间表示（尺寸即采样器目标尺寸）\n- 补边信息：记录补边区域，供编辑对齐节点裁剪",
+            description="图像编辑节点，用于将输入图像编码为条件向量和潜空间表示，支持多种对齐模式。\n\n功能特性：\n- 动态输入：支持1-10张图片，接入后自动显示新输入点\n- 三种对齐模式：\n  - flux2klein：Flux2模型标准模式（仅参考潜空间）\n  - qwenedit：Qwen模型编辑模式（视觉编码+参考潜空间）\n  - boogu：Boogu图像编辑模式（视觉编码+参考潜空间）\n- 等比缩放：等比适配目标宽高，兰佐斯插值\n- 自动补边：填充至VAE对齐尺寸（按VAE下采样倍率对齐）\n\n输出：\n- 正面输出：正面提示词编码\n- 负面输出：负面提示词编码\n- latent：参考图像的潜空间表示（尺寸即采样器目标尺寸）\n- 补边信息：记录补边区域，供编辑对齐节点裁剪\n- 可选遮罩：白色区域重绘，黑色及补边区域保留原图（随 latent 接入采样器生效）",
             inputs=[
                 io.Clip.Input("clip", display_name="CLIP模型"),
                 io.Vae.Input("vae", display_name="VAE模型"),
                 io.Autogrow.Input("图片", template=image_template),
+                io.Mask.Input("mask", display_name="遮罩", optional=True,
+                              tooltip="可选。白色区域重绘、黑色区域保留原图；跟随主图同规则缩放补边，输出 latent 自带 noise_mask（需把 latent 接入采样器）。"),
                 io.String.Input("正面提示词", multiline=True, dynamic_prompts=True),
                 io.String.Input("负面提示词", multiline=True, dynamic_prompts=True),
                 io.Combo.Input("对齐模式", options=["flux2klein", "qwenedit", "boogu"], default="flux2klein"),
@@ -145,36 +177,37 @@ class ST_ImageEditor(io.ComfyNode):
         )
 
     @classmethod
-    def execute(cls, clip, vae, 图片, 正面提示词, 负面提示词, 对齐模式, 生成图像宽度, 生成图像高度) -> io.NodeOutput:
+    def execute(cls, clip, vae, 图片, mask, 正面提示词, 负面提示词, 对齐模式, 生成图像宽度, 生成图像高度) -> io.NodeOutput:
         input_images = list(图片.values())
-        
+
         if 对齐模式 == "flux2klein":
             result = cls._process_flux2klein(
                 clip, vae, input_images, 正面提示词, 负面提示词,
-                生成图像宽度, 生成图像高度
+                生成图像宽度, 生成图像高度, mask
             )
         elif 对齐模式 == "qwenedit":
             result = cls._process_qwen(
                 clip, vae, input_images, 正面提示词, 负面提示词,
-                生成图像宽度, 生成图像高度
+                生成图像宽度, 生成图像高度, mask
             )
         else:
             result = cls._process_boogu(
                 clip, vae, input_images, 正面提示词, 负面提示词,
-                生成图像宽度, 生成图像高度
+                生成图像宽度, 生成图像高度, mask
             )
         
         return io.NodeOutput(*result)
 
     @classmethod
-    def _process_boogu(cls, clip, vae, input_images, positive_prompt, negative_prompt, ref_width, ref_height):
+    def _process_boogu(cls, clip, vae, input_images, positive_prompt, negative_prompt, ref_width, ref_height, mask=None):
         """Boogu 模式：视觉编码 + reference_latents 同时写正负 → CFG 下抵消原图结构。"""
         vae_unit = _extract_downscale_ratio(vae)
-        
+
         pad_info = {"x": 0, "y": 0, "width": 0, "height": 0, "scale_by": 1.0}
         ref_latents = []
         images_vl = []
-        
+        noise_mask = None
+
         # 第一张非空图为主图（pad_info 取自主图的缩放/补边数据）
         main_image_index = -1
         for i, image in enumerate(input_images):
@@ -203,7 +236,12 @@ class ST_ImageEditor(io.ComfyNode):
             ref_latents.append(encoded_latent)
             if i == main_image_index:
                 pad_info = pi
-        
+                if mask is not None:
+                    noise_mask = _build_noise_mask(
+                        mask, scaled_w, scaled_h, canvas_w, canvas_h,
+                        vae_unit, encoded_latent.dim()
+                    )
+
         # 正面：带视觉图像；负面：纯文本
         positive = clip.encode_from_tokens_scheduled(
             clip.tokenize(positive_prompt, images=images_vl)
@@ -223,17 +261,21 @@ class ST_ImageEditor(io.ComfyNode):
             samples_out = ref_latents[0]
         else:
             samples_out = torch.zeros(1, 4, 128, 128)
-        
-        return (positive, negative, {"samples": samples_out}, pad_info)
+
+        latent_out = {"samples": samples_out}
+        if noise_mask is not None:
+            latent_out["noise_mask"] = noise_mask
+        return (positive, negative, latent_out, pad_info)
 
     @classmethod
-    def _process_qwen(cls, clip, vae, input_images, positive_prompt, negative_prompt, ref_width, ref_height):
+    def _process_qwen(cls, clip, vae, input_images, positive_prompt, negative_prompt, ref_width, ref_height, mask=None):
         """Qwen 模式：视觉编码（带 llama_template）+ reference_latents 仅写正面。"""
         vae_unit = _extract_downscale_ratio(vae)
-        
+
         pad_info = {"x": 0, "y": 0, "width": 0, "height": 0, "scale_by": 1.0}
         ref_latents = []
         vl_images = []
+        noise_mask = None
         image_prompt = ""
         
         main_image_index = -1
@@ -264,7 +306,12 @@ class ST_ImageEditor(io.ComfyNode):
             ref_latents.append(encoded_latent)
             if i == main_image_index:
                 pad_info = pi
-        
+                if mask is not None:
+                    noise_mask = _build_noise_mask(
+                        mask, scaled_w, scaled_h, canvas_w, canvas_h,
+                        vae_unit, encoded_latent.dim()
+                    )
+
         # Qwen 特有：image_prompt + positive_prompt + llama_template
         full_prompt = image_prompt + positive_prompt
         llama_template = (
@@ -291,16 +338,20 @@ class ST_ImageEditor(io.ComfyNode):
             samples_out = ref_latents[0]
         else:
             samples_out = torch.zeros(1, 4, 128, 128)
-        
-        return (positive_out, negative_out, {"samples": samples_out}, pad_info)
+
+        latent_out = {"samples": samples_out}
+        if noise_mask is not None:
+            latent_out["noise_mask"] = noise_mask
+        return (positive_out, negative_out, latent_out, pad_info)
 
     @classmethod
-    def _process_flux2klein(cls, clip, vae, input_images, positive_prompt, negative_prompt, ref_width, ref_height):
+    def _process_flux2klein(cls, clip, vae, input_images, positive_prompt, negative_prompt, ref_width, ref_height, mask=None):
         """Flux2Klein 模式：无视觉编码，reference_latents 仅写正面。"""
         vae_unit = _extract_downscale_ratio(vae)
-        
+
         pad_info = {"x": 0, "y": 0, "width": 0, "height": 0, "scale_by": 1.0}
         ref_latents = []
+        noise_mask = None
         
         main_image_index = -1
         for i, image in enumerate(input_images):
@@ -320,11 +371,16 @@ class ST_ImageEditor(io.ComfyNode):
             ref_latents.append(encoded_latent)
             if i == main_image_index:
                 pad_info = pi
-        
+                if mask is not None:
+                    noise_mask = _build_noise_mask(
+                        mask, scaled_w, scaled_h, canvas_w, canvas_h,
+                        vae_unit, encoded_latent.dim()
+                    )
+
         # 无视觉编码，纯文本 tokenize
         positive_out = clip.encode_from_tokens_scheduled(clip.tokenize(positive_prompt))
         negative_out = clip.encode_from_tokens_scheduled(clip.tokenize(negative_prompt))
-        
+
         if len(ref_latents) > 0:
             positive_out = node_helpers.conditioning_set_values(
                 positive_out, {"reference_latents": ref_latents}, append=True
@@ -332,8 +388,11 @@ class ST_ImageEditor(io.ComfyNode):
             samples_out = ref_latents[0]
         else:
             samples_out = torch.zeros(1, 16, 128, 128)
-        
-        return (positive_out, negative_out, {"samples": samples_out}, pad_info)
+
+        latent_out = {"samples": samples_out}
+        if noise_mask is not None:
+            latent_out["noise_mask"] = noise_mask
+        return (positive_out, negative_out, latent_out, pad_info)
 
 
 class ST_ImageSizeAligner:
