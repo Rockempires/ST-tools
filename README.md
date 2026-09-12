@@ -49,7 +49,9 @@
 >
 > 基于 NVIDIA DLSS 神经渲染（NGX），对图像或视频做超分辨率放大 + 神经渲染增强。三个节点均位于右键菜单 `石头工具 ▸ DLSS渲染` 子菜单下。
 >
-> DLSS 程序下载地址：https://pan.baidu.com/s/1Rwx3tm9P6uywE9WavviRaw?pwd=9917
+> DLSS 程序下载地址：
+> - 百度网盘：https://pan.baidu.com/s/1eawiyldNx2rNdBWmuSJq6g?pwd=9917 
+> - 夸克网盘：https://pan.quark.cn/s/84b582e1b2d1?pwd=UxM8
 >
 > 下载后将 `dlssnr.exe`、`ffmpeg.exe`、`ffprobe.exe` 及 `nvngx*.dll` 放入 `ST-tools\dlssnr\bin\` 目录。
 
