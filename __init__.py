@@ -49,7 +49,7 @@ from .nodes import ST_ImageMaskLatentSize, ST_OfflineTranslator, ST_ImagePostPro
 
 # 启动日志
 logger.info("--------------------------------------------------------------------------------")
-logger.info("🎯石头版ComfyUI-v12-20260817  +Q群获取更新：33320584")
+logger.info("🎯石头版ComfyUI-v12  +Q群获取更新：33320584")
 logger.info(r"🎯石头工具 节点已加载，用法详阅节点说明")
 logger.info("--------------------------------------------------------------------------------")
 
