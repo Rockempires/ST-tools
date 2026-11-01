@@ -8,7 +8,7 @@ import importlib.metadata
 import platform
 
 # 配置日志
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.INFO, format='[ST-tools] %(levelname)s: %(message)s')
 logger = logging.getLogger(__name__)
 
 # 在导入节点前尝试确保 requirements.txt 中的依赖已安装
@@ -27,17 +27,17 @@ def _ensure_requirements():
             import argostranslate  # noqa: F401
             return
         except Exception:
-            logger.info("ST_tools: 检测到缺失依赖，尝试自动安装 requirements.txt 中的依赖...")
+            logger.info("检测到缺失依赖，尝试自动安装 requirements.txt 中的依赖...")
 
         # 调用 pip 安装依赖（使用当前 python 解释器）
         try:
             res = subprocess.run([sys.executable, '-m', 'pip', 'install', '-r', req_path], capture_output=True, text=True, timeout=900)
             if res.returncode == 0:
-                logger.info("ST_tools: 依赖安装成功")
+                logger.info("依赖安装成功")
             else:
-                logger.warning(f"ST_tools: 依赖安装失败，pip 返回码 {res.returncode}, stderr: {res.stderr}")
+                logger.warning(f"依赖安装失败，pip 返回码 {res.returncode}, stderr: {res.stderr}")
         except Exception as e:
-            logger.warning(f"ST_tools: 自动安装依赖时发生异常: {e}")
+            logger.warning(f"自动安装依赖时发生异常: {e}")
     except Exception:
         # 不要让自动安装导致导入失败
         pass
@@ -49,7 +49,7 @@ from .nodes import ST_ImageMaskLatentSize, ST_OfflineTranslator, ST_ImagePostPro
 
 # 启动日志
 logger.info("--------------------------------------------------------------------------------")
-logger.info("🎯石头版ComfyUI-v12  +Q群获取更新：33320584")
+logger.info("🎯石头版ComfyUI封装包及技术补丁  +Q群获取更新：33320584")
 logger.info(r"🎯石头工具 节点已加载，用法详阅节点说明")
 logger.info("--------------------------------------------------------------------------------")
 

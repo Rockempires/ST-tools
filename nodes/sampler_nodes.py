@@ -62,7 +62,7 @@ class ST_KSamplerWithVAE:
             latent_samples = latent_samples.unbind()[0]
 
         images = VAE.decode(latent_samples)
-        if len(images.shape) == 5: #Combine batches
+        if len(images.shape) == 5:  # 合并批次
             images = images.reshape(-1, images.shape[-3], images.shape[-2], images.shape[-1])
         image = images
         

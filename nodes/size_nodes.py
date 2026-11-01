@@ -214,7 +214,7 @@ class ST_ImageMaskLatentSize:
 
         except Exception as e:
             # 出错也必须原样透传真实输入，绝不能返回写死的全零 latent（VAE 解码会变绿屏）
-            print(f"处理尺寸时出错，输入原样透传: {e}")
+            print(f"[ST-tools] 处理尺寸时出错，输入原样透传: {e}")
             image_in = kwargs.get("图像")
             mask_in = kwargs.get("遮罩")
             latent_in = kwargs.get("latent")

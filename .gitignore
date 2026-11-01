@@ -43,3 +43,10 @@ Thumbs.db
 *.ckpt
 *.safetensors
 *.argosmodel
+
+# Binary executables and DLLs (user downloads separately)
+*.exe
+*.dll
+
+# Debug logs
+*.log

@@ -39,7 +39,7 @@ class ST_ModelsLoader:
     DESCRIPTION = "同时加载UNET、CLIP和VAE模型。"
 
     def load_models(self, **kwargs):
-        print(f"\n[ST] === 开始加载模型 ===")
+        print(f"\n[ST-tools] === 开始加载模型 ===")
         
         # 获取参数值
         unet_name = kwargs.get("UNET模型")
@@ -53,30 +53,30 @@ class ST_ModelsLoader:
         if unet_name != "无":
             unet_loader = UNETLoader()
             model = unet_loader.load_unet(unet_name=unet_name, weight_dtype=weight_dtype)[0]
-            print(f"[ST] UNET: {unet_name}")
+            print(f"[ST-tools] UNET: {unet_name}")
         else:
             model = None
-            print(f"[ST] UNET: 未选择")
+            print(f"[ST-tools] UNET: 未选择")
 
         # 加载CLIP模型
         if clip_name != "无":
             clip_loader = CLIPLoader()
             clip = clip_loader.load_clip(clip_name=clip_name, type=type, device=device)[0]
-            print(f"[ST] CLIP: {clip_name}")
+            print(f"[ST-tools] CLIP: {clip_name}")
         else:
             clip = None
-            print(f"[ST] CLIP: 未选择")
+            print(f"[ST-tools] CLIP: 未选择")
 
         # 加载VAE模型
         if vae_name != "无":
             vae_loader = VAELoader()
             vae = vae_loader.load_vae(vae_name=vae_name)[0]
-            print(f"[ST] VAE: {vae_name}")
+            print(f"[ST-tools] VAE: {vae_name}")
         else:
             vae = None
-            print(f"[ST] VAE: 未选择")
+            print(f"[ST-tools] VAE: 未选择")
 
-        print(f"[ST] === 模型加载完成 ===\n")
+        print(f"[ST-tools] === 模型加载完成 ===\n")
         return (model, clip, vae)
 
 # 注册节点

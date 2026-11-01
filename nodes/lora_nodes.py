@@ -95,9 +95,9 @@ class ST_LoraStack:
                 else:
                     # 只应用Lora到模型
                     模型, _ = comfy.sd.load_lora_for_models(模型, None, lora, lora_strength, lora_strength)
-                print(f"[ST] 应用Lora: {lora_name} | 强度={lora_strength}")
+                print(f"[ST-tools] 应用Lora: {lora_name} | 强度={lora_strength}")
             except Exception as e:
-                print(f"[ST] ✗ 错误: {e}")
+                print(f"[ST-tools] Lora加载错误: {e}")
         
         # 返回加载了Lora的模型和CLIP（如果CLIP存在）
         return (模型, CLIP)

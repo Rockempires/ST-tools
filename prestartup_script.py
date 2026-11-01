@@ -7,6 +7,7 @@ import os
 import socket
 import logging
 
+logging.basicConfig(level=logging.WARNING, format='[ST-tools] %(levelname)s: %(message)s')
 logger = logging.getLogger(__name__)
 
 def apply_asyncio_patch():

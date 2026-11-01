@@ -32,14 +32,14 @@ class ST_FilterShader:
     
     @classmethod
     def IS_CHANGED(cls, **kwargs):
-        """检测节点参数是否变化"""
+        """强制每次重算（滤镜预览场景需要）"""
         return str(time.time())
 
     RETURN_TYPES = ("IMAGE",)
     RETURN_NAMES = ("图像",)
     FUNCTION = "run"
     CATEGORY = "🎯 石头工具/图像编辑"
-    DESCRIPTION = '图像滤镜节点\n支持深度叠加和柔光混合调色模式\n滤镜强度范围1-2 (1: 不改变画面, 2: 滤镜最大值，推荐1.2-1.5)\n\n滤镜效果说明：\n电影暗青：低饱和冷青调电影风 强氛围感\n电影复古：暖调复古胶片 适配怀旧画面\n电影墨绿：深墨绿电影色调 适配自然暗调场景\n动漫风格：高对比高饱和二次元色彩 适配动漫插画\n对比调节：增强对比通透 调色基础层\n烟熏装扮：低饱和灰调质感 适配人像情绪画面\n中性冷青：中性冷青调 适配多数场景'
+    DESCRIPTION = '图像滤镜节点\n\n滤镜文件来自 Shader 目录下的 .cube 文件，列表随目录自动更新。\n\n调色模式：\n- 深度叠加：LUT 直接叠加到原片\n- 柔光混合：对数空间应用 LUT，暗部过渡更自然\n\n滤镜强度：1.0 = 原片不变，2.0 = 滤镜满效果，推荐 1.2-1.5'
 
     def run(self, **kwargs):
         """执行滤镜应用操作"""
@@ -72,7 +72,7 @@ class ST_FilterShader:
             return (result,)
         except Exception as e:
             # 错误处理
-            print(f"应用滤镜时出错: {e}")
+            print(f"[ST-tools] 应用滤镜时出错: {e}")
             # 返回原始图像
             return (kwargs["图像"],)
 

@@ -39,7 +39,7 @@ class ST_ImagePostProcessing:
     RETURN_TYPES = ("IMAGE",)
     FUNCTION = "run"
     CATEGORY = "🎯 石头工具/图像编辑"
-    DESCRIPTION = "说明：所有参数范围为0.0-2.0，1.0为默认值（不改画面），步数为0.01\n\n图像：输入的图像\n亮度：调整图像明暗程度\n对比度：调整图像明暗对比\n饱和度：调整图像色彩鲜艳程度\nGamma：调整图像亮度曲线\n红色_青色：调整红色和青色平衡\n绿色_洋红：调整绿色和洋红平衡\n蓝色_黄色：调整蓝色和黄色平衡\n模糊_锐化：值<1为模糊，值>1为锐化\nHDR强度：增强局部对比度，保留更多细节（1.0保持原图，1-2增加HDR强度\n自适应画质增强：增强图像边缘和纹理细节"
+    DESCRIPTION = "所有参数范围 0.0-2.0，1.0 为默认值（不改画面），步数 0.01\n\n亮度：调整图像明暗程度\n对比度：调整图像明暗对比\n饱和度：调整图像色彩鲜艳程度\nGamma：调整图像亮度曲线\n红色_青色：调整红色和青色平衡\n绿色_洋红：调整绿色和洋红平衡\n蓝色_黄色：调整蓝色和黄色平衡\n模糊_锐化：<1 模糊，>1 锐化\nHDR强度：增强局部对比度，1.0 保持原图，1-2 增加 HDR 强度\n自适应画质增强：增强图像边缘和纹理细节"
 
     def run(self, 图像, 亮度, 对比度, 饱和度, Gamma, 红色_青色, 绿色_洋红, 蓝色_黄色, 模糊_锐化, HDR强度, 自适应画质增强, unique_id, save_preview=True, return_ui=True):
         """执行图像处理操作"""
@@ -87,7 +87,7 @@ class ST_ImagePostProcessing:
             return tensors
         except Exception as e:
             # 错误处理
-            print(f"处理图像时出错: {e}")
+            print(f"[ST-tools] 处理图像时出错: {e}")
             # 返回原始图像
             return 图像
 
@@ -188,8 +188,8 @@ class ST_ImagePostProcessing:
             img_array = (255. * img_array).astype(np.uint8)
             return Image.fromarray(img_array)
         except Exception as e:
-            print(f"[ST_tools] 图像转换警告：在将张量转换为PIL图像时遇到问题 - {str(e)}")
-            print("[ST_tools] 解决建议：检查输入图像格式及节点是否被链接或启用。")
+            print(f"[ST-tools] 图像转换警告：在将张量转换为PIL图像时遇到问题 - {str(e)}")
+            print("[ST-tools] 解决建议：检查输入图像格式及节点是否被链接或启用。")
             # 尝试使用更安全的方式转换
             try:
                 img_array = image.cpu().numpy().squeeze()
@@ -198,8 +198,8 @@ class ST_ImagePostProcessing:
                 img_array = (255. * img_array).astype(np.uint8)
                 return Image.fromarray(img_array)
             except Exception as e2:
-                print(f"[ST_tools] 图像转换失败：{str(e2)}")
-                print("[ST_tools] 解决建议：检查输入图像格式及节点是否被链接或启用。")
+                print(f"[ST-tools] 图像转换失败：{str(e2)}")
+                print("[ST-tools] 解决建议：检查输入图像格式及节点是否被链接或启用。")
                 # 返回一个空图像作为 fallback
                 return Image.new('RGB', (100, 100), color='black')
 

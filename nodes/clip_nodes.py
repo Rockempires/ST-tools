@@ -1,5 +1,4 @@
 import torch
-from nodes import CLIPTextEncode, ConditioningZeroOut
 
 class ST_CLIPTextEncoder:
     """CLIP编码器节点 - 合并正向和负向提示词输入"""
@@ -60,7 +59,7 @@ class ST_CLIPTextEncoder:
             return (positive_conditioning, negative_conditioning, zero_conditioning)
         except Exception as e:
             # 错误处理
-            print(f"[ST_tools] CLIP文本编码器执行失败: {str(e)}")
+            print(f"[ST-tools] CLIP文本编码器执行失败: {str(e)}")
             # 直接使用CLIP模型创建空条件
             empty_tokens = CLIP.tokenize("")
             empty_conditioning = CLIP.encode_from_tokens_scheduled(empty_tokens)
