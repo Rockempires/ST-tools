@@ -1,3 +1,5 @@
+
+from .. import st_log
 """
 图像尺寸节点（ST_ImageMaskLatentSize）
 
@@ -133,7 +135,6 @@ class ST_ImageMaskLatentSize:
         """主入口：确定目标尺寸 → 所有已接入的输入各自处理并返回，缺省的输出为 None。"""
         try:
             vae_unit, latent_channels, vae_is_3d = self._resolve_vae_unit_and_channels(kwargs)
-
             use_custom = kwargs["自定义尺寸"]
             ratio_name = kwargs["预设比例"]
             画面方向 = kwargs["画面方向"]
@@ -214,7 +215,6 @@ class ST_ImageMaskLatentSize:
 
         except Exception as e:
             # 出错也必须原样透传真实输入，绝不能返回写死的全零 latent（VAE 解码会变绿屏）
-            print(f"[ST-tools] 处理尺寸时出错，输入原样透传: {e}")
             image_in = kwargs.get("图像")
             mask_in = kwargs.get("遮罩")
             latent_in = kwargs.get("latent")
@@ -435,11 +435,3 @@ class ST_ImageMaskLatentSize:
         )
         return resized.squeeze(1)
 
-
-NODE_CLASS_MAPPINGS = {
-    "ST_ImageMaskLatentSize": ST_ImageMaskLatentSize
-}
-
-NODE_DISPLAY_NAME_MAPPINGS = {
-    "ST_ImageMaskLatentSize": "图像尺寸"
-}

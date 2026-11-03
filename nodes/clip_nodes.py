@@ -1,5 +1,7 @@
 import torch
 
+from .. import st_log
+
 class ST_CLIPTextEncoder:
     """CLIP编码器节点 - 合并正向和负向提示词输入"""
     DISPLAY_NAME = "CLIP编码器"
@@ -25,7 +27,6 @@ class ST_CLIPTextEncoder:
     DESCRIPTION = "合并CLIP文本编码功能，同时处理正向和负向提示词。"
 
     def encode(self, CLIP, 正向提示词, 负向提示词):
-        # 执行CLIP文本编码操作
         try:
             # 确保提示词是字符串类型
             if not isinstance(正向提示词, str):
@@ -59,18 +60,9 @@ class ST_CLIPTextEncoder:
             return (positive_conditioning, negative_conditioning, zero_conditioning)
         except Exception as e:
             # 错误处理
-            print(f"[ST-tools] CLIP文本编码器执行失败: {str(e)}")
+            st_log(f"CLIP文本编码器执行失败: {str(e)}")
             # 直接使用CLIP模型创建空条件
             empty_tokens = CLIP.tokenize("")
             empty_conditioning = CLIP.encode_from_tokens_scheduled(empty_tokens)
             # 返回空条件
             return (empty_conditioning, empty_conditioning, empty_conditioning)
-
-# 注册节点
-NODE_CLASS_MAPPINGS = {
-    "ST_CLIPTextEncoder": ST_CLIPTextEncoder
-}
-
-NODE_DISPLAY_NAME_MAPPINGS = {
-    "ST_CLIPTextEncoder": "CLIP编码器"
-}

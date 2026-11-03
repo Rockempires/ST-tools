@@ -19,6 +19,8 @@ from fractions import Fraction
 import numpy as np
 import torch
 
+from .. import st_log
+
 # ST-tools 根目录（本文件位于 nodes/ 下）
 _TOOL_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -491,15 +493,3 @@ class ST_DLSSNRRuntimeInfo:
             lines.extend(_zh_log_line(x) for x in log)
         return ("\n".join(lines)[-4000:],)
 
-
-NODE_CLASS_MAPPINGS = {
-    "ST_DLSSNRImage": ST_DLSSNRImage,
-    "ST_DLSSNRVideo": ST_DLSSNRVideo,
-    "ST_DLSSNRRuntimeInfo": ST_DLSSNRRuntimeInfo,
-}
-
-NODE_DISPLAY_NAME_MAPPINGS = {
-    "ST_DLSSNRImage": "渲染图像(DLSS)",
-    "ST_DLSSNRVideo": "渲染视频(DLSS)",
-    "ST_DLSSNRRuntimeInfo": "渲染检测(DLSS)",
-}

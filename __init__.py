@@ -8,8 +8,84 @@ import importlib.metadata
 import platform
 
 # 配置日志
-logging.basicConfig(level=logging.INFO, format='[ST-tools] %(levelname)s: %(message)s')
+logging.basicConfig(level=logging.INFO, format='[st-tools] %(levelname)s: %(message)s')
 logger = logging.getLogger(__name__)
+
+# ---- 统一日志缓冲 + 对象 Registry ----
+import threading
+
+# Registry：id(obj) -> {filename, lora_list, meta, ...}
+# 任何对象都能用 id() 做 key（包括 Python list / conditioning）
+_ST_REG = {}
+
+def _reg_set(obj, **kwargs):
+    """给任意对象（model/clip/vae/conditioning）登记信息，用 id() 做 key。
+
+    自动记录 type=对象类名，fallback 时只扫同类型条目，
+    避免 UNET fallback 捞到 CLIP 的 filename 这类跨类型误命中。
+    可选 role='unet'/'clip'/'vae'/'conditioning'，sampler 可按角色搜索（不依赖精确对象引用）。
+    """
+    if obj is None:
+        return
+    info = _ST_REG.setdefault(id(obj), {})
+    info.update(kwargs)
+    if 'type' not in info:
+        info['type'] = type(obj).__name__
+
+def _reg_get(obj, key=None, default=None):
+    """从 registry 读指定对象的登记信息。key=None 返回整个 dict。
+
+    Fallback 仅对 filename / lora_list 生效（UNET model 在 ComfyUI 内部可能被多次 clone）。
+    Fallback 只扫 **同 type 对象**的条目，避免跨类型误命中。
+    """
+    if obj is None:
+        return default if key else {}
+    info = _ST_REG.get(id(obj), {})
+    if key is None:
+        return info
+    if key in info:
+        return info[key]
+    # Fallback：UNET model 被多次 clone 换 id 时，倒序扫 registry 中 type 相同的条目
+    obj_type = type(obj).__name__
+    if key in ('filename', 'lora_list'):
+        for k, v in reversed(list(_ST_REG.items())):
+            if v.get('type') == obj_type and key in v:
+                return v[key]
+    return default
+
+def _reg_get_by_role(role, key, default=None):
+    """按角色搜索 registry（不依赖精确对象引用）。
+    用于 sampler 拿 CLIP/VAE 文件名——当 edit_nodes 没执行时 meta 不存在，
+    直接按 role='clip' 从 registry 里搜 model_nodes 登记的 CLIP 对象。
+    """
+    for k, v in reversed(list(_ST_REG.items())):
+        if v.get('role') == role and key in v:
+            return v[key]
+    return default
+
+# 日志缓冲：先入 buffer，sampler 结尾统一 print
+_ST_BUFFER = []
+_BUFFER_LOCK = threading.Lock()
+
+def _flush_locked():
+    if not _ST_BUFFER:
+        return
+    msgs = _ST_BUFFER[:]
+    _ST_BUFFER.clear()
+    print("[st-tools] --- 执行开始 ---")
+    for m in msgs:
+        print(f"[st-tools] {m}")
+    print("[st-tools] --- 执行结束 ---")
+
+def st_log(msg):
+    """节点入口调用：先入 buffer，不立即 print。"""
+    with _BUFFER_LOCK:
+        _ST_BUFFER.append(str(msg))
+
+def st_flush():
+    """集中打印所有缓冲日志。KSampler run 结尾会调一次。"""
+    with _BUFFER_LOCK:
+        _flush_locked()
 
 # 在导入节点前尝试确保 requirements.txt 中的依赖已安装
 def _ensure_requirements():

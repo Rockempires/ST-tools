@@ -4,6 +4,8 @@ from PIL import Image
 import os
 import time
 
+from .. import st_log
+
 class ST_FilterShader:
     """图像滤镜节点 - 加载和应用.cube格式的滤镜文件，支持深度叠加和柔光混合调色模式"""
     DISPLAY_NAME = "图像滤镜"
@@ -39,7 +41,7 @@ class ST_FilterShader:
     RETURN_NAMES = ("图像",)
     FUNCTION = "run"
     CATEGORY = "🎯 石头工具/图像编辑"
-    DESCRIPTION = '图像滤镜节点\n\n滤镜文件来自 Shader 目录下的 .cube 文件，列表随目录自动更新。\n\n调色模式：\n- 深度叠加：LUT 直接叠加到原片\n- 柔光混合：对数空间应用 LUT，暗部过渡更自然\n\n滤镜强度：1.0 = 原片不变，2.0 = 滤镜满效果，推荐 1.2-1.5'
+    DESCRIPTION = '图像滤镜节点\n\n滤镜文件来自 Shader 目录下的 .cube 文件，列表随目录自动更新。\n\n调色模式：\n- 深度叠加：LUT 直接叠加到原片\n- 柔光混合：对数空间应用 LUT，暗部过渡更自然\n\n滤镜强度：1.0 = 原片不变，2.0 = 滤镜效果最强（混入 30% LUT），推荐 1.2-1.5'
 
     def run(self, **kwargs):
         """执行滤镜应用操作"""
@@ -56,8 +58,8 @@ class ST_FilterShader:
             
             intensity = kwargs["滤镜强度"]
             
-            # 转换强度范围：1.0-2.0 映射到 0.0-0.2
-            blend_factor = max(0.0, min(0.2, (intensity - 1.0) * 0.2))
+            # 转换强度范围：1.0-2.0 映射到 0.0-0.3
+            blend_factor = max(0.0, min(0.3, (intensity - 1.0) * 0.3))
             
             # 构建滤镜文件路径
             default_shader_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "Shader")
@@ -72,7 +74,7 @@ class ST_FilterShader:
             return (result,)
         except Exception as e:
             # 错误处理
-            print(f"[ST-tools] 应用滤镜时出错: {e}")
+            st_log(f"应用滤镜时出错: {e}")
             # 返回原始图像
             return (kwargs["图像"],)
 

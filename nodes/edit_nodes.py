@@ -1,3 +1,5 @@
+
+from .. import _reg_set, _reg_get
 """
 编辑图像节点 + 编辑对齐节点
 
@@ -5,27 +7,30 @@ ST_ImageEditor：
     图像编码 / 纯文本编码一体化节点。
     - 无图像输入时直接当作文本编码器使用（VAE 也可不接）
     - 三种模式：
-        flux2klein   — 左上放置（右下补边），无视觉编码，reference_latents 仅写正面
+        flux2klein     — 左上放置（右下补边），无视觉编码，reference_latents 仅写正面
         qwenedit-krea2 — 左上放置（右下补边），视觉编码（带 llama_template），
-                       reference_latents 仅写正面
-        qwenimage21  — 居中放置（四周补黑），keep_vision 协议，reference_latents 正负都写
+                         reference_latents 仅写正面
+        qwenimage21    — 入口检测尺寸后分两套独立处理：
+            · 同尺寸（宽/高为 0 或与图像1一致）→ 纯编辑：官方 TextEncodeQwenImage21
+              按短边 vis_res 编码，采样后编辑对齐节点放大回图像1原尺寸
+            · 不同尺寸（宽/高均>0 且与图像1不同）→ 扩图：每张参考图 fit-within
+              居中贴纯黑画布，视觉塔+VAE 整张画布编码，输出即输入画布尺寸
 
     flux2klein / qwenedit-krea2 共用 _prepare_reference_latent：
         fit-within 等比缩放 → 黑色画布左上放置 → VAE encode
 
-    qwenimage21 使用 _prepare_reference_latent(placement="center")：
-        fit-within 等比缩放 → 黑色画布居中放置 → VAE encode → 视觉塔
-
     补边策略：
         画布（采样器目标）按 ref_width/ref_height 对齐 vae_unit；
         图像 fit-within 保持宽高比不变形；
-        pad_info 记录补边几何 + target_w/h，供 ST_ImageSizeAligner 裁剪还原。
+        pad_info 记录补边几何 + target_w/h 或 orig_w/h，供 ST_ImageSizeAligner 裁剪/放大还原。
 
     遮罩（可选输入 mask）：
         白色区域重绘、黑色区域保留；写入输出 latent["noise_mask"]。
 
 ST_ImageSizeAligner：
-    接收 pad_info + KSampler 输出图像，强制 resize 到 target_w/target_h（编辑节点输入尺寸）。
+    接收 pad_info + KSampler 输出图像还原最终尺寸：
+    优先按 orig_w/h（qwenimage21 纯编辑放大回图像1原尺寸）或 target_w/h（扩图/其他模式的画布尺寸）
+    lanczos resize；二者都缺失时按补边几何（x/y/width/height/placement）裁掉补边区。
 """
 
 import torch
@@ -34,6 +39,7 @@ import node_helpers
 import comfy.utils
 import comfy.model_management
 from comfy_api.latest import io
+from comfy_extras.nodes_qwen import TextEncodeQwenImage21
 
 
 _MODE_SPECS = {
@@ -44,22 +50,6 @@ _MODE_SPECS = {
 
 _EMPTY_PAD_INFO = {"x": 0, "y": 0, "width": 0, "height": 0, "scale_by": 1.0, "target_w": 0, "target_h": 0}
 
-
-def _debug_mask(label, noise_mask, samples_out, ref_latents, mode):
-    """打印遮罩链路关键值。"""
-    print(f"[ST-tools] [遮罩调试] === {mode} ({label}) ===")
-    print(f"  采样输出 shape={tuple(samples_out.shape)} dtype={samples_out.dtype} "
-          f"范围=[{samples_out.min():.3f}, {samples_out.max():.3f}] 非零数={torch.count_nonzero(samples_out).item()}")
-    if noise_mask is not None:
-        print(f"  遮罩 latent  shape={tuple(noise_mask.shape)} dtype={noise_mask.dtype} "
-              f"范围=[{noise_mask.min():.3f}, {noise_mask.max():.3f}] "
-              f"白色像素={torch.count_nonzero(noise_mask).item()}/{noise_mask.numel()}")
-    else:
-        print(f"  遮罩 latent  = 无")
-    if ref_latents:
-        r = ref_latents[0]
-        print(f"  参考 latent[0] shape={tuple(r.shape)} dtype={r.dtype} "
-              f"范围=[{r.min():.3f}, {r.max():.3f}] 非零数={torch.count_nonzero(r).item()}")
 
 def _extract_downscale_ratio(vae):
     """从 VAE 解析空间压缩比。3D VAE 取最后一个元素（空间倍率），2D VAE 直接取值。"""
@@ -93,22 +83,19 @@ def _empty_latent(channels, canvas_width, canvas_height, vae_unit, latent_dim):
     return torch.zeros(shape, device=comfy.model_management.intermediate_device())
 
 
-def _prepare_reference_latent(samples, ref_width, ref_height, vae_unit, vae=None, placement="top_left", zero_padding=False):
+def _prepare_reference_latent(samples, ref_width, ref_height, vae_unit, vae=None, placement="top_left"):
     """
     参考图像 → latent 处理流程。
 
     placement:
         "top_left" — fit-within 等比缩放后左上放置 → 右下补黑
         "center"   — fit-within 等比缩放后居中放置 → 四周补黑
-    zero_padding:
-        True  — VAE encode 后将补边区 latent 置零
-        False — 保留完整 encode
 
     流程：
         1. fit-within 等比缩放，保持宽高比
-        2. canvas 按 ref 对齐 vae_unit
+        2. canvas 按 ref ceil 对齐 vae_unit
         3. 按 placement 放置图像 → 黑边区填 0,0,0
-        4. VAE 已接时 encode → zero_padding=True 则补边区置零
+        4. VAE 已接时对整张画布 encode
 
     返回：
         (encoded_latent, pad_info_dict, scaled_w, scaled_h, canvas_w, canvas_h, scale_by, canvas_image)
@@ -123,7 +110,7 @@ def _prepare_reference_latent(samples, ref_width, ref_height, vae_unit, vae=None
     scaled_width = int(round(original_w * scale_by))
     scaled_height = int(round(original_h * scale_by))
 
-    # canvas 按 ref 对齐 vae_unit → latent shape 可预测
+    # canvas 按 ref ceil 对齐 vae_unit → latent shape 可预测
     canvas_width = math.ceil(ref_width / vae_unit) * vae_unit
     canvas_height = math.ceil(ref_height / vae_unit) * vae_unit
 
@@ -151,30 +138,6 @@ def _prepare_reference_latent(samples, ref_width, ref_height, vae_unit, vae=None
         vae_img = canvas.movedim(1, -1)[:, :, :, :3]
         encoded_latent = vae.encode(vae_img)
 
-        if zero_padding:
-            # 将补边区 latent 置零 → 采样起点从噪声开始（扩图必需）
-            if encoded_latent.dim() == 5:
-                latent_h, latent_w = encoded_latent.shape[3], encoded_latent.shape[4]
-            else:
-                latent_h, latent_w = encoded_latent.shape[2], encoded_latent.shape[3]
-
-            img_l = max(0, pad_left // vae_unit)
-            img_t = max(0, pad_top // vae_unit)
-            img_r = min(latent_w, (pad_left + scaled_width) // vae_unit)
-            img_b = min(latent_h, (pad_top + scaled_height) // vae_unit)
-
-            # 构造布尔 mask：True=补边区（置零），False=原图区（保留）
-            rows = torch.arange(latent_h, device=encoded_latent.device)
-            cols = torch.arange(latent_w, device=encoded_latent.device)
-            img_area = (rows[:, None] >= img_t) & (rows[:, None] < img_b) & \
-                       (cols[None, :] >= img_l) & (cols[None, :] < img_r)
-            padding = ~img_area  # True 表示补边区
-
-            if encoded_latent.dim() == 5:
-                encoded_latent = encoded_latent.masked_fill(padding[None, None, None, :, :], 0.0)
-            else:
-                encoded_latent = encoded_latent.masked_fill(padding[None, None, :, :], 0.0)
-
     # pad_info：x/y 是图像左上偏移，width/height 是画布总补边量
     pad_info_dict = {
         "x": pad_left,
@@ -195,11 +158,10 @@ def _build_pixel_mask(mask, canvas_width, canvas_height,
                       scaled_width=None, scaled_height=None, placement="top_left",
                       fill_unscaled=1.0):
     """
-    像素空间 mask：和 canvas_image 同尺寸、同 fit-within 比例、同 placement。
+    像素空间 mask：与画布同尺寸，用户遮罩缩放到 scaled 子区并按 placement 放入。
 
-    fill_unscaled: 补边区（scaled 外）填什么值。
-        1.0 — 扩图模式：补边区自由生成
-        0.0 — 纯局部重绘：补边区锁定为"非重绘"
+    fill_unscaled: 补边区（scaled 子区外）的取值，当前各模式统一传 1.0（补边区自由生成）。
+        用户未接遮罩时整个画布恒为 1（全图自由采样）。
     返回 shape [1, H, W]，值 {0,1}。
     """
     if scaled_width is None:
@@ -235,7 +197,7 @@ def _build_noise_mask(pixel_mask, vae_unit, latent_dim, grow=0):
     像素空间 pixel_mask → latent 空间 noise_mask。
 
     pixel_mask: [B, H, W]  {0,1}，和 canvas_image 同尺寸。
-    grow:       像素空间边缘膨胀（dilation），消除 latent 下采样硬边，默认 10。
+    grow:       像素空间边缘膨胀（dilation）像素数，0 表示不膨胀；调用方统一传 10。
     返回:        noise_mask tensor，对齐 latent_dim（4D→[B,1,lh,lw]，5D→[B,1,1,lh,lw]）。
     """
     # 统一转 4D [B, 1, H, W] 处理
@@ -301,7 +263,7 @@ class ST_ImageEditor(io.ComfyNode):
             node_id="ST_ImageEditor",
             display_name="编辑图像",
             category="🎯 石头工具/图像编辑",
-            description="图像编码 / 文本编码一体化节点，无图像输入时可直接当文本编码器使用（VAE 也可不接）。\n\n三种模式：\n- flux2klein：左上放置，右下补边，纯文本编码\n- qwenedit-krea2：左上放置，右下补边，视觉编码+官方编辑模板\n- qwenimage21：居中放置，四周补黑，视觉编码（keep_vision）\n\n等比缩放、兰佐斯插值、按VAE下采样倍率对齐；可选遮罩白色重绘黑色保留。\n\n输出：正面/负面提示词编码、latent、补边信息（供编辑对齐节点裁剪）。",
+            description="图像编码 / 文本编码一体化节点，无图像输入时可直接当文本编码器使用（VAE 也可不接）。\n\n三种模式：\n- flux2klein：左上放置，右下补边，纯文本编码\n- qwenedit-krea2：左上放置，右下补边，视觉编码+官方编辑模板\n- qwenimage21：自动检测——宽/高为0或与图像1同尺寸走纯编辑（官方节点编码，对齐节点放大回原图）；与图像1尺寸不同走居中补黑扩图（输出即输入画布尺寸）\n\n等比缩放、兰佐斯插值、按VAE下采样倍率对齐；可选遮罩白色重绘黑色保留。\n\n输出：正面/负面提示词编码、latent、补边信息（供编辑对齐节点裁剪）。",
             inputs=[
                 io.Clip.Input("clip", display_name="CLIP模型"),
                 io.Vae.Input("vae", display_name="VAE模型", optional=True,
@@ -315,10 +277,10 @@ class ST_ImageEditor(io.ComfyNode):
                 io.Combo.Input("对齐模式",
                                options=["flux2klein", "qwenedit-krea2", "qwenimage21"],
                                default="flux2klein"),
-                io.Int.Input("生成图像宽度", default=1024, min=1, max=4096, step=8,
-                             tooltip="画布宽度，直接作为输出尺寸。"),
-                io.Int.Input("生成图像高度", default=1024, min=1, max=4096, step=8,
-                             tooltip="画布高度，直接作为输出尺寸。"),
+                io.Int.Input("生成图像宽度", default=1024, min=0, max=16384, step=8,
+                             tooltip="qwenimage21模式：宽/高任一填0、或与图像1同尺寸→纯编辑（输出=图像1原尺寸）；宽高都>0且与图像1不同→图像1居中补黑扩图，此值即输出画布宽。flux2klein/qwenedit-krea2模式：目标画布宽，需≥32，勿填0。"),
+                io.Int.Input("生成图像高度", default=1024, min=0, max=16384, step=8,
+                             tooltip="qwenimage21模式：宽/高任一填0、或与图像1同尺寸→纯编辑（输出=图像1原尺寸）；宽高都>0且与图像1不同→图像1居中补黑扩图，此值即输出画布高。flux2klein/qwenedit-krea2模式：目标画布高，需≥32，勿填0。"),
             ],
             outputs=[
                 io.Conditioning.Output("正面输出"),
@@ -332,8 +294,7 @@ class ST_ImageEditor(io.ComfyNode):
     def execute(cls, clip, vae=None, 图片=None, mask=None, 正面提示词="", 负面提示词="",
                 对齐模式="flux2klein", 生成图像宽度=1024, 生成图像高度=1024) -> io.NodeOutput:
         input_images = [im for im in (图片 or {}).values() if im is not None]
-        print(f"[ST-tools] [遮罩入口] 模式={对齐模式} 图像数={len(input_images)} "
-              f"遮罩={'无' if mask is None else f'形状={tuple(mask.shape)} 范围=[{mask.min():.3f},{mask.max():.3f}]'}")
+        scene = "编辑" if input_images else "文生图"
 
         if 对齐模式 == "flux2klein":
             result = cls._process_flux2klein(
@@ -346,10 +307,23 @@ class ST_ImageEditor(io.ComfyNode):
                 生成图像宽度, 生成图像高度, mask
             )
         elif 对齐模式 == "qwenimage21":
+            # 入口检测同尺寸（纯编辑）/不同尺寸（扩图），传原始 图片 dict 保留编号槽位
             result = cls._process_qwen21(
-                clip, vae, input_images, 正面提示词, 负面提示词,
+                clip, vae, 图片, 正面提示词, 负面提示词,
                 生成图像宽度, 生成图像高度, mask
             )
+
+        # 把元信息登记到 registry（用 id(positive_out) 做 key，因为 conditioning 是 Python list 不能打属性）
+        positive_out = result[0]
+        clip_name = _reg_get(clip, 'filename') if clip is not None else None
+        _reg_set(positive_out, meta={
+            "mode": 对齐模式,
+            "scene": scene,
+            "mask": "有" if mask is not None else "无",
+            "clip_name": clip_name,
+            "pos_len": len(正面提示词),
+            "neg_len": len(负面提示词),
+        })
 
         return io.NodeOutput(*result)
 
@@ -381,14 +355,11 @@ class ST_ImageEditor(io.ComfyNode):
             image_prompt += "Picture {}: <|vision_start|><|image_pad|><|vision_end|>".format(i + 1)
 
             result = _prepare_reference_latent(samples, ref_width, ref_height, vae_unit, vae)
-            encoded_latent, pi, scaled_w, scaled_h, canvas_w, canvas_h, scale_by, canvas_img = result
+            encoded_latent, pi, scaled_w, scaled_h, canvas_w, canvas_h, _scale_by, canvas_img = result
             if encoded_latent is not None:
                 ref_latents.append(encoded_latent)
             if i == 0:
                 pad_info = pi
-                print(f"[ST-tools] [遮罩构建] qwenedit-krea2: 遮罩={'无' if mask is None else f'形状={tuple(mask.shape)}'}, "
-                      f"画布={canvas_w}x{canvas_h}, 缩放后={scaled_w}x{scaled_h}, "
-                      f"VAE倍率={vae_unit}, 图像数={len(input_images)}")
                 pixel_mask = _build_pixel_mask(
                     mask, canvas_w, canvas_h, scaled_w, scaled_h,
                     placement="top_left", fill_unscaled=1.0  # 补边区自由生成（扩图）
@@ -431,7 +402,6 @@ class ST_ImageEditor(io.ComfyNode):
                 cond_updates = {"concat_mask": noise_mask, "concat_latent_image": concat_latent}
                 positive_out = node_helpers.conditioning_set_values(positive_out, cond_updates, append=True)
                 negative_out = node_helpers.conditioning_set_values(negative_out, cond_updates, append=True)
-        _debug_mask("qwenedit-krea2", noise_mask, samples_out, ref_latents, "qwenedit-krea2")
         return (positive_out, negative_out, latent_out, pad_info)
 
     @classmethod
@@ -451,14 +421,11 @@ class ST_ImageEditor(io.ComfyNode):
             samples = image.movedim(-1, 1)
 
             result = _prepare_reference_latent(samples, ref_width, ref_height, vae_unit, vae)
-            encoded_latent, pi, scaled_w, scaled_h, canvas_w, canvas_h, scale_by, canvas_img = result
+            encoded_latent, pi, scaled_w, scaled_h, canvas_w, canvas_h, _scale_by, canvas_img = result
             if encoded_latent is not None:
                 ref_latents.append(encoded_latent)
             if i == 0:
                 pad_info = pi
-                print(f"[ST-tools] [遮罩构建] flux2_klein: 遮罩={'无' if mask is None else f'形状={tuple(mask.shape)}'}, "
-                      f"画布={canvas_w}x{canvas_h}, 缩放后={scaled_w}x{scaled_h}, "
-                      f"VAE倍率={vae_unit}, 图像数={len(input_images)}")
                 pixel_mask = _build_pixel_mask(
                     mask, canvas_w, canvas_h, scaled_w, scaled_h,
                     placement="top_left", fill_unscaled=1.0  # 补边区自由生成（扩图）
@@ -479,26 +446,134 @@ class ST_ImageEditor(io.ComfyNode):
         latent_out = {"samples": samples_out}
         if noise_mask is not None:
             latent_out["noise_mask"] = noise_mask
-            # 遮罩区填灰后 VAE encode，作为 concat_latent_image
             if len(ref_latents) > 0 and vae is not None:
                 concat_latent = _build_concat_latent_image(canvas_img, pixel_mask, vae)
                 cond_updates = {"concat_mask": noise_mask, "concat_latent_image": concat_latent}
                 positive_out = node_helpers.conditioning_set_values(positive_out, cond_updates, append=True)
                 negative_out = node_helpers.conditioning_set_values(negative_out, cond_updates, append=True)
-        _debug_mask("flux2_klein", noise_mask, samples_out, ref_latents, "flux2_klein")
         return (positive_out, negative_out, latent_out, pad_info)
 
     @classmethod
-    def _process_qwen21(cls, clip, vae, input_images, positive_prompt, negative_prompt, ref_width, ref_height, mask=None):
-        """
-        qwenimage21 模式：居中放置 + fit-within 等比缩放 + 四周纯黑补边。
+    def _process_qwen21(cls, clip, vae, images_map, positive_prompt, negative_prompt, ref_width, ref_height, mask=None):
+        """qwenimage21 入口：先检测同尺寸 / 不同尺寸，再分发到两套完全独立的处理。
 
-        keep_vision 协议，reference_latents 正负都写（CFG 对称）。
-        pad_info 记录居中偏移 + target_w/target_h，供 aligner 强制 resize 还原。
-        提示词直接透传用户原始输入。
+        同尺寸（宽高输入任一为 0，或输入尺寸与图像1一致）→ _process_qwen21_edit
+        不同尺寸（输入宽高均 >0 且与图像1尺寸不同）      → _process_qwen21_outpaint
+        """
+        images_map = images_map or {}
+        ordered_keys = sorted(
+            images_map.keys(),
+            key=lambda k: int("".join(ch for ch in k if ch.isdigit()) or 0),
+        )
+        imgs = [images_map[k] for k in ordered_keys if images_map.get(k) is not None]
+
+        if not imgs:
+            return cls._process_qwen21_edit(
+                clip, vae, images_map, positive_prompt, negative_prompt,
+                ref_width, ref_height, mask)
+
+        first_img = imgs[0]
+        orig_h, orig_w = int(first_img.shape[1]), int(first_img.shape[2])
+        ow = max(32, round(orig_w / 32) * 32)
+        oh = max(32, round(orig_h / 32) * 32)
+
+        if ref_width and ref_width > 0 and ref_height and ref_height > 0:
+            cw = max(32, round(ref_width / 32) * 32)
+            ch = max(32, round(ref_height / 32) * 32)
+        else:
+            cw, ch = ow, oh
+
+        if (cw, ch) == (ow, oh):
+            return cls._process_qwen21_edit(
+                clip, vae, images_map, positive_prompt, negative_prompt,
+                ref_width, ref_height, mask)
+
+        return cls._process_qwen21_outpaint(
+            clip, vae, images_map, positive_prompt, negative_prompt,
+            ref_width, ref_height, mask)
+
+    @classmethod
+    def _process_qwen21_edit(cls, clip, vae, images_map, positive_prompt, negative_prompt, ref_width, ref_height, mask=None):
+        """qwenimage21 纯编辑模式（独立）。
+
+        参考图按短边 vis_res（1024~2560）等比缩放后交官方 TextEncodeQwenImage21 编码，
+        采样在缩后尺寸进行，补边信息记录图像1原尺寸，由编辑对齐节点 lanczos 放大回原尺寸。
+        遮罩 nearest 铺满整个生成画布。宽/高输入框仅在无图纯文本时用于零 latent。
+        """
+        images_map = images_map or {}
+        ordered_keys = sorted(
+            images_map.keys(),
+            key=lambda k: int("".join(ch for ch in k if ch.isdigit()) or 0),
+        )
+        official_images = {f"image_{i + 1}": images_map.get(k)
+                           for i, k in enumerate(ordered_keys)}
+        channels, vae_unit, _ = _MODE_SPECS["qwenimage21"]  # 64 / 16 / 4
+
+        # 无图纯文本：官方编码，零 latent 取宽高输入框
+        if not any(images_map.get(k) is not None for k in ordered_keys):
+            out = TextEncodeQwenImage21.execute(
+                clip, positive_prompt, negative_prompt,
+                vae=vae, resolution=0, images=official_images)
+            positive, negative, latent_out = out[0], out[1], out[2]
+            cw = max(32, round((ref_width or 1024) / 32) * 32)
+            ch = max(32, round((ref_height or 1024) / 32) * 32)
+            latent_out["samples"] = torch.zeros(
+                [1, channels, ch // vae_unit, cw // vae_unit],
+                device=comfy.model_management.intermediate_device())
+            if mask is not None:
+                gh, gw = latent_out["samples"].shape[-2], latent_out["samples"].shape[-1]
+                m = mask[0] if mask.dim() == 3 else mask
+                m = torch.nn.functional.interpolate(
+                    m[None, None].float(), size=(gh * vae_unit, gw * vae_unit), mode="nearest")[0, 0]
+                grid = torch.nn.functional.interpolate(
+                    m[None, None], size=(gh, gw), mode="nearest")[0, 0].round()
+                latent_out["noise_mask"] = grid[None, None]
+            return (positive, negative, latent_out, dict(_EMPTY_PAD_INFO))
+
+        first_img = next(images_map[k] for k in ordered_keys if images_map.get(k) is not None)
+        orig_h, orig_w = int(first_img.shape[1]), int(first_img.shape[2])
+        vis_res = max(1024, min(orig_w, orig_h, 2560))
+
+        out = TextEncodeQwenImage21.execute(
+            clip, positive_prompt, negative_prompt,
+            vae=vae, resolution=vis_res, images=official_images)
+        positive, negative, latent_out = out[0], out[1], out[2]
+        zero = latent_out["samples"]
+        scaled_w, scaled_h = zero.shape[-1] * vae_unit, zero.shape[-2] * vae_unit
+
+        if mask is not None:
+            gh, gw = zero.shape[-2], zero.shape[-1]
+            m = mask[0] if mask.dim() == 3 else mask
+            m = torch.nn.functional.interpolate(
+                m[None, None].float(), size=(gh * vae_unit, gw * vae_unit), mode="nearest")[0, 0]
+            grid = torch.nn.functional.interpolate(
+                m[None, None], size=(gh, gw), mode="nearest")[0, 0].round()
+            latent_out["noise_mask"] = grid[None, None]
+
+        pad_info = {
+            "x": 0, "y": 0, "width": 0, "height": 0,
+            "scale_by": orig_w / scaled_w if scaled_w > 0 else 1.0,
+            "orig_w": orig_w, "orig_h": orig_h,
+        }
+        return (positive, negative, latent_out, pad_info)
+
+    @classmethod
+    def _process_qwen21_outpaint(cls, clip, vae, images_map, positive_prompt, negative_prompt, ref_width, ref_height, mask=None):
+        """qwenimage21 不同尺寸扩图处理（独立，与纯编辑互不共用）。
+
+        每张参考图各自 fit-within 等比缩放后居中贴入同一尺寸纯黑画布（四周补黑），
+        视觉塔取 32 对齐画布，VAE 直接 encode 整张画布作 reference_latents（正/负都写）。
+        接了 VAE 时采样起点取整张画布 encode（未接遮罩即等价全图重绘），未接 VAE 时用零 latent。
+        pad_info 记录居中偏移 + target_w/h，供编辑对齐节点还原到输入画布尺寸。
         """
         channels, def_unit, latent_dim = _MODE_SPECS["qwenimage21"]
         vae_unit = _extract_downscale_ratio(vae) if vae is not None else def_unit
+
+        ordered_keys = sorted(
+            (images_map or {}).keys(),
+            key=lambda k: int("".join(ch for ch in k if ch.isdigit()) or 0),
+        )
+        input_images = [images_map[k] for k in ordered_keys if images_map.get(k) is not None]
 
         pad_info = dict(_EMPTY_PAD_INFO)
         ref_latents = []
@@ -514,7 +589,7 @@ class ST_ImageEditor(io.ComfyNode):
             result = _prepare_reference_latent(
                 samples, ref_width, ref_height, vae_unit, vae, placement="center"
             )
-            encoded_latent, pi, scaled_w, scaled_h, canvas_w, canvas_h, scale_by, canvas = result
+            encoded_latent, pi, scaled_w, scaled_h, canvas_w, canvas_h, _scale_by, canvas = result
             if encoded_latent is not None:
                 ref_latents.append(encoded_latent)
 
@@ -528,16 +603,13 @@ class ST_ImageEditor(io.ComfyNode):
 
             if i == 0:
                 pad_info = pi
-                print(f"[ST-tools] [遮罩构建] qwenimage21: 遮罩={'无' if mask is None else f'形状={tuple(mask.shape)}'}, "
-                      f"画布={canvas_w}x{canvas_h}, 缩放后={scaled_w}x{scaled_h}, "
-                      f"VAE倍率={vae_unit}, 图像数={len(input_images)}")
                 pixel_mask = _build_pixel_mask(
                     mask, canvas_w, canvas_h, scaled_w, scaled_h,
                     placement="center", fill_unscaled=1.0  # 补边区自由生成（扩图）
                 )
                 noise_mask = _build_noise_mask(pixel_mask, vae_unit, latent_dim, grow=10)
 
-        # 文本编码，与官方 TextEncodeQwenImage21 行为一致
+        # 视觉塔编码，keep_vision 协议；reference_latents 正/负都写（CFG 两侧序列等长）
         keep_vision = len(ref_latents) == 0
         positive = clip.encode_from_tokens_scheduled(
             clip.tokenize(positive_prompt, images=vl_images, keep_vision=keep_vision, prevent_empty_text=True)
@@ -546,7 +618,6 @@ class ST_ImageEditor(io.ComfyNode):
             clip.tokenize(negative_prompt, images=vl_images, keep_vision=keep_vision, prevent_empty_text=True)
         )
 
-        # 正负面都写 ref：CFG 两侧序列等长，差异只隔离文本方向
         if len(ref_latents) > 0:
             positive = node_helpers.conditioning_set_values(
                 positive, {"reference_latents": ref_latents}, append=True
@@ -555,23 +626,21 @@ class ST_ImageEditor(io.ComfyNode):
                 negative, {"reference_latents": ref_latents}, append=True
             )
 
-        # samples：有 mask 且有 ref_latents → 用 VAE encode canvas（noise_mask=0 区保持原图）
-        # 否则零 latent（参考图走 keep_vision context 拼接，不作采样起点）
+        # 有 noise_mask 且有 ref_latents → 采样起点用画布 encode；否则零 latent
         if noise_mask is not None and len(ref_latents) > 0:
             samples_out = ref_latents[0]
         else:
-            canvas_w, canvas_h = _align_canvas(ref_width, ref_height, vae_unit)
-            samples_out = _empty_latent(channels, canvas_w, canvas_h, vae_unit, latent_dim)
+            cw, ch = _align_canvas(ref_width, ref_height, vae_unit)
+            samples_out = _empty_latent(channels, cw, ch, vae_unit, latent_dim)
 
         latent_out = {"samples": samples_out}
         if noise_mask is not None:
             latent_out["noise_mask"] = noise_mask
-        _debug_mask("qwenimage21", noise_mask, samples_out, ref_latents, "qwenimage21")
         return (positive, negative, latent_out, pad_info)
 
 
 class ST_ImageSizeAligner:
-    """编辑对齐节点：根据补边信息裁剪 KSampler 输出，还原 fit-within 尺寸。"""
+    """编辑对齐节点：按补边信息把 KSampler 输出 resize 回目标尺寸，或裁掉补边区。"""
 
     DISPLAY_NAME = "编辑对齐"
 
@@ -591,25 +660,23 @@ class ST_ImageSizeAligner:
     RETURN_NAMES = ("对齐后图像",)
     FUNCTION = "align"
     CATEGORY = "🎯 石头工具/图像编辑"
-    DESCRIPTION = "接收编辑图像节点的补边信息，对K采样器生成的图像进行反向裁剪/对齐，让生成图像与原图尺寸完全一致。"
+    DESCRIPTION = "接收编辑图像节点的补边信息，把K采样器输出还原到目标尺寸：纯编辑放大回图像1原尺寸，扩图对齐到所填画布尺寸，必要时裁掉补边区。串在VAE解码之后。"
 
     def align(self, 补边信息, 生成图像):
-        target_w = 补边信息.get("target_w")
-        target_h = 补边信息.get("target_h")
+        # 目标尺寸优先级：orig_w/h（纯编辑放大回图像1原尺寸）> target_w/h（画布输入尺寸）
+        target_w = 补边信息.get("orig_w") or 补边信息.get("target_w")
+        target_h = 补边信息.get("orig_h") or 补边信息.get("target_h")
 
         img = 生成图像.movedim(-1, 1)
         cur_h, cur_w = img.shape[2], img.shape[3]
 
-        # 有 target 尺寸：以 target 为唯一准绳
         if target_w and target_h:
             if cur_w == target_w and cur_h == target_h:
-                # canvas 对齐 vae_unit 后恰好等于 target → 直接返回
                 return (img.movedim(1, -1),)
-            # canvas 对齐后 ≠ target（如 1080→1088）→ resize 还原
             img = comfy.utils.common_upscale(img, target_w, target_h, "lanczos", "disabled")
             return (img.movedim(1, -1),)
 
-        # 无 target（旧 pad_info 兼容）→ 回退到裁剪补边
+        # 无目标尺寸（无图纯文本的空补边信息）→ 按补边几何裁掉补边区
         x = 补边信息.get("x", 0)
         y = 补边信息.get("y", 0)
         width_padding = 补边信息.get("width", 0)
@@ -631,13 +698,3 @@ class ST_ImageSizeAligner:
 
         return (cropped_img.movedim(1, -1),)
 
-
-NODE_CLASS_MAPPINGS = {
-    "ST_ImageEditor": ST_ImageEditor,
-    "ST_ImageSizeAligner": ST_ImageSizeAligner,
-}
-
-NODE_DISPLAY_NAME_MAPPINGS = {
-    "ST_ImageEditor": "编辑图像",
-    "ST_ImageSizeAligner": "编辑对齐",
-}

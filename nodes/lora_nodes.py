@@ -2,6 +2,8 @@ import folder_paths
 import comfy.sd
 import comfy.utils
 
+from .. import _reg_set, _reg_get
+
 class ST_LoraStack:
     """Lora加载节点 - 同时加载多个Lora模型到模型和CLIP中"""
     
@@ -57,56 +59,51 @@ class ST_LoraStack:
         # 获取CLIP（可选）
         CLIP = kwargs.get("CLIP")
         
-        # 统计加载的Lora数量
-        lora_count = 0
+        # 应用 LoRA 前先拍 registry 快照（load_lora_for_models 返回的是 model.clone()，id 会变）
+        old_model_info = _reg_get(模型)
+        old_clip_info = _reg_get(CLIP) if CLIP is not None else {}
+        
+        lora_list = []
         
         # 处理4个Lora输入
         lora_keys = ["lora加载", "lora加载 ", "lora加载  ", "lora加载   "]
         strength_keys = ["强度", "强度 ", "强度  ", "强度   "]
         
         for i, (lora_key, strength_key) in enumerate(zip(lora_keys, strength_keys), 1):
-            # 获取当前Lora的名称和强度值
             lora_name = kwargs.get(lora_key)
             lora_strength = kwargs.get(strength_key, 1.0)
             
-            # 检查是否选择了"无"或强度值为0
             if lora_name == "无" or lora_strength == 0:
                 continue
             
-            # 增加Lora计数
-            lora_count += 1
-            
             try:
-                # 获取Lora文件路径
                 lora_path = folder_paths.get_full_path_or_raise("loras", lora_name)
-                
-                # 检查是否已加载过该Lora
-                lora = None
-                if lora_path in self.loaded_loras:
-                    lora = self.loaded_loras[lora_path]
-                else:
-                    # 加载Lora文件
+                lora = self.loaded_loras.get(lora_path)
+                if lora is None:
                     lora = comfy.utils.load_torch_file(lora_path, safe_load=True)
                     self.loaded_loras[lora_path] = lora
                 
-                # 应用Lora到模型和CLIP（如果CLIP存在）
                 if CLIP is not None:
                     模型, CLIP = comfy.sd.load_lora_for_models(模型, CLIP, lora, lora_strength, lora_strength)
                 else:
-                    # 只应用Lora到模型
                     模型, _ = comfy.sd.load_lora_for_models(模型, None, lora, lora_strength, lora_strength)
-                print(f"[ST-tools] 应用Lora: {lora_name} | 强度={lora_strength}")
+                lora_list.append((lora_name, lora_strength))
             except Exception as e:
-                print(f"[ST-tools] Lora加载错误: {e}")
+                pass
         
-        # 返回加载了Lora的模型和CLIP（如果CLIP存在）
+        # load_lora_for_models 返回的是 model.clone()（新对象 id 变了），
+        # 把旧 registry 快照搬到新 clone 上，但显式跳过 lora_list——
+        # lora_list 是本次 run 全新生成的，不能从旧对象搬（会跨 run 累加）
+        if old_model_info:
+            for k, v in old_model_info.items():
+                if k != 'lora_list':
+                    _reg_set(模型, **{k: v})
+        if old_clip_info and CLIP is not None:
+            for k, v in old_clip_info.items():
+                _reg_set(CLIP, **{k: v})
+        # lora_list 直接 set，不 existing + new——每次 run 都是全新的 4 个 slot 收集结果
+        if lora_list:
+            _reg_set(模型, lora_list=lora_list)
+        
         return (模型, CLIP)
 
-# 注册节点
-NODE_CLASS_MAPPINGS = {
-    "ST_LoraStack": ST_LoraStack
-}
-
-NODE_DISPLAY_NAME_MAPPINGS = {
-    "ST_LoraStack": "Lora加载"
-}

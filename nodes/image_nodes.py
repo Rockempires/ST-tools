@@ -7,6 +7,8 @@ import folder_paths
 import random
 import os
 
+from .. import st_log
+
 class ST_ImagePostProcessing:
     """图像调色节点 - 调整图像的亮度、对比度、饱和度、Gamma、色彩平衡、模糊/锐化、HDR效果和自适应画质增强"""
     DISPLAY_NAME = "图像调色"
@@ -23,7 +25,7 @@ class ST_ImagePostProcessing:
                 "亮度": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 2.0, "step": 0.01}),
                 "对比度": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 2.0, "step": 0.01}),
                 "饱和度": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 2.0, "step": 0.01}),
-                "Gamma": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 2.0, "step": 0.01}),
+                "Gamma": ("FLOAT", {"default": 1.0, "min": 0.01, "max": 2.0, "step": 0.01}),
                 "红色_青色": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 2.0, "step": 0.01}),
                 "绿色_洋红": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 2.0, "step": 0.01}),
                 "蓝色_黄色": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 2.0, "step": 0.01}),
@@ -87,22 +89,24 @@ class ST_ImagePostProcessing:
             return tensors
         except Exception as e:
             # 错误处理
-            print(f"[ST-tools] 处理图像时出错: {e}")
+            st_log(f"处理图像出错: {e}")
             # 返回原始图像
             return 图像
 
     def _process_single_image(self, img, 亮度, 对比度, 饱和度, Gamma, 红色_青色, 绿色_洋红, 蓝色_黄色, 模糊_锐化, HDR强度, 自适应画质增强):
-        """处理单个图像"""
+        """处理单个图像。img 始终是 torch.Tensor（ComfyUI IMAGE 标准格式），
+        亮度/对比度/Gamma 用 torch.clamp 保持 tensor 类型，避免 np.clip 隐式转 numpy
+        导致后续 tensor2pil 调用失败。"""
         pil_image = None
         
         # 亮度调整
         if 亮度 != 1.0:
-            img = np.clip(img * 亮度, 0.0, 1.0)
+            img = torch.clamp(img * 亮度, 0.0, 1.0)
         
         # 对比度调整
         if 对比度 != 1.0:
             midpoint = 0.5
-            img = np.clip((img - midpoint) * 对比度 + midpoint, 0.0, 1.0)
+            img = torch.clamp((img - midpoint) * 对比度 + midpoint, 0.0, 1.0)
         
         # Gamma调整
         if Gamma != 1.0:
@@ -112,9 +116,10 @@ class ST_ImagePostProcessing:
         # 色彩平衡调整
         if 红色_青色 != 1.0 or 绿色_洋红 != 1.0 or 蓝色_黄色 != 1.0:
             pil_image = pil_image if pil_image else self.tensor2pil(img)
-            cr = 红色_青色 - 1.0
-            mg = 绿色_洋红 - 1.0
-            yb = 蓝色_黄色 - 1.0
+            # ×0.2 缩小倍率，让滑块 0.01 step 产生细腻变化
+            cr = (红色_青色 - 1.0) * 0.2
+            mg = (绿色_洋红 - 1.0) * 0.2
+            yb = (蓝色_黄色 - 1.0) * 0.2
             pil_image = self.color_balance(pil_image, cr, mg, yb)
         
         # 饱和度调整
@@ -188,8 +193,7 @@ class ST_ImagePostProcessing:
             img_array = (255. * img_array).astype(np.uint8)
             return Image.fromarray(img_array)
         except Exception as e:
-            print(f"[ST-tools] 图像转换警告：在将张量转换为PIL图像时遇到问题 - {str(e)}")
-            print("[ST-tools] 解决建议：检查输入图像格式及节点是否被链接或启用。")
+            st_log(f"图像转PIL警告: {e}")
             # 尝试使用更安全的方式转换
             try:
                 img_array = image.cpu().numpy().squeeze()
@@ -198,27 +202,14 @@ class ST_ImagePostProcessing:
                 img_array = (255. * img_array).astype(np.uint8)
                 return Image.fromarray(img_array)
             except Exception as e2:
-                print(f"[ST-tools] 图像转换失败：{str(e2)}")
-                print("[ST-tools] 解决建议：检查输入图像格式及节点是否被链接或启用。")
+                st_log(f"图像转PIL失败: {e2}")
                 # 返回一个空图像作为 fallback
                 return Image.new('RGB', (100, 100), color='black')
 
-    def adjust_saturation(self, img_array, factor):
-        """调整图像饱和度"""
-        # 将RGB转换为HSL
-        # 计算亮度
-        gray = np.mean(img_array, axis=2, keepdims=True)
-        
-        # 应用饱和度调整
-        adjusted = gray + factor * (img_array - gray)
-        
-        # 确保值在有效范围内
-        adjusted = np.clip(adjusted, 0.0, 1.0)
-        
-        return adjusted
-
     def gamma_trans(self, image, gamma):
         """进行Gamma校正"""
+        # gamma <= 0 在数学上无意义（1/gamma = inf），强制保护
+        gamma = max(gamma, 0.01)
         cv2_image = self.pil2cv2(image)
         # 标准Gamma校正公式：输出 = (输入/255)^(1/gamma) * 255
         # 当gamma < 1时，图像变亮；当gamma > 1时，图像变暗

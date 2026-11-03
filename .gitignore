@@ -50,3 +50,10 @@ Thumbs.db
 
 # Debug logs
 *.log
+
+# Local-only directories (not uploaded to GitHub)
+models/
+dlssnr/
+
+# Local sync utility (not uploaded)
+sync_from_github.ps1

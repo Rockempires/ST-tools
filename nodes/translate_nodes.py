@@ -4,7 +4,7 @@ import subprocess
 import logging
 
 # 配置日志 - 只显示基本信息
-logging.basicConfig(level=logging.WARNING, format='[ST-tools] %(levelname)s: %(message)s')
+logging.basicConfig(level=logging.WARNING, format='[st-tools] %(levelname)s: %(message)s')
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
