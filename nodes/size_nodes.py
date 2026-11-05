@@ -6,7 +6,7 @@ from .. import st_log
 职责：接收图像/遮罩/latent（全部 optional，至少接一个），输出对齐 vae_unit 后的图像、遮罩、latent 和最终宽高。
 
 尺寸确定优先级：
-    自定义尺寸（自定义尺寸=true） > 预设比例（预设比例≠关闭）
+    自定义尺寸（自定义尺寸开启） > 预设比例（预设比例≠关闭）
     > 图像输入尺寸 > latent 输入尺寸 > 兜底 1024×1024
 确定后统一对齐到 vae_unit 倍数。
 
@@ -42,7 +42,7 @@ class ST_ImageMaskLatentSize:
         
         return {
             "required": {
-                "自定义尺寸": ("BOOLEAN", {"default": False}),
+                "自定义尺寸": ("BOOLEAN", {"default": False, "label_on": "开启", "label_off": "关闭"}),
                 "预设比例": (ratio_options, {"default": ratio_options[0] if ratio_options else "无可用比例"}),
                 "画面方向": (["横向", "竖向"], {"default": "横向"}),
                 "宽度": ("INT", {"default": 1024, "min": 64, "max": 8192, "step": 8}),

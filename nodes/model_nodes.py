@@ -5,7 +5,7 @@ from nodes import UNETLoader, CLIPLoader, VAELoader
 from .. import _reg_set
 
 class ST_ModelsLoader:
-    """模型加载节点 - 同时加载UNET、CLIP和VAE模型"""
+    """模型加载节点 - 同时加载UNET、CLIP和两个独立的VAE模型"""
     DISPLAY_NAME = "模型加载"
     
     @classmethod
@@ -27,28 +27,30 @@ class ST_ModelsLoader:
                 "权重类型": (weight_dtype_opts, {"advanced": True, "tooltip": "模型权重的数据类型。"}),
                 "CLIP模型": (clip_files, {"default": "无", "tooltip": "CLIP模型的名称。"}),
                 "CLIP类型": (clip_type_opts, {"default": "flux2", "tooltip": "CLIP模型的类型。"}),
-                "VAE模型": (vae_files, {"default": "无", "tooltip": "VAE模型的名称。"}),
+                "VAE模型": (vae_files, {"default": "无", "display_name": "VAE模型1", "tooltip": "第一路VAE，双VAE视频工作流中可选择视频VAE。只加载一个VAE时，任一槽位均可，两个输出都会提供该VAE。"}),
             },
             "optional": {
+                "VAE模型2": (vae_files, {"default": "无", "tooltip": "第二路VAE，双VAE视频工作流中可选择音频VAE。两路均选择时分别从VAE1、VAE2输出；只选择本槽位时两个输出均可使用。"}),
                 "设备": (device_opts, {"advanced": True, "tooltip": "CLIP模型的加载设备。"}),
             }
         }
 
-    RETURN_TYPES = ("MODEL", "CLIP", "VAE")
-    RETURN_NAMES = ("模型", "CLIP", "VAE")
+    RETURN_TYPES = ("MODEL", "CLIP", "VAE", "VAE")
+    RETURN_NAMES = ("模型", "CLIP", "VAE1", "VAE2")
     FUNCTION = "load_models"
     CATEGORY = "🎯 石头工具/基础流程"
-    DESCRIPTION = "同时加载UNET、CLIP和VAE模型。"
+    DESCRIPTION = "同时加载UNET、CLIP和两个独立VAE。两路均选择时分别输出；只选择任一路时，两个VAE输出均提供已加载的模型。"
 
     def load_models(self, **kwargs):
         unet_name = kwargs.get("UNET模型")
         weight_dtype = kwargs.get("权重类型")
         clip_name = kwargs.get("CLIP模型")
         clip_type = kwargs.get("CLIP类型", "stable_diffusion")
-        vae_name = kwargs.get("VAE模型")
+        vae_name = kwargs.get("VAE模型", "无")
+        vae_name2 = kwargs.get("VAE模型2", "无")
         device = kwargs.get("设备", "default")
 
-        model = clip = vae = None
+        model = clip = vae = vae2 = None
 
         if unet_name != "无":
             model = UNETLoader().load_unet(unet_name=unet_name, weight_dtype=weight_dtype)[0]
@@ -56,9 +58,18 @@ class ST_ModelsLoader:
         if clip_name != "无":
             clip = CLIPLoader().load_clip(clip_name=clip_name, type=clip_type, device=device)[0]
             _reg_set(clip, filename=clip_name, role='clip')
-        if vae_name != "无":
+        if vae_name and vae_name != "无":
             vae = VAELoader().load_vae(vae_name=vae_name)[0]
             _reg_set(vae, filename=vae_name, role='vae')
 
-        return (model, clip, vae)
+        if vae_name2 and vae_name2 != "无":
+            # 两个槽位选择同一文件时复用本次加载结果，避免重复读取权重。
+            if vae_name2 == vae_name:
+                vae2 = vae
+            else:
+                vae2 = VAELoader().load_vae(vae_name=vae_name2)[0]
+                _reg_set(vae2, filename=vae_name2, role='vae')
+
+        # 保留原有输出位置；只加载一路时，任一槽位均能供原工作流使用。
+        return (model, clip, vae if vae is not None else vae2, vae2 if vae2 is not None else vae)
 
