@@ -123,6 +123,10 @@ _ensure_requirements()
 
 from .nodes import ST_ImageMaskLatentSize, ST_OfflineTranslator, ST_ImagePostProcessing, ST_FilterShader, ST_ImageEditor, ST_ImageSizeAligner, ST_ModelsLoader, ST_LoraStack, ST_KSamplerWithVAE, ST_CLIPTextEncoder, ST_DLSSNRImage, ST_DLSSNRVideo, ST_DLSSNRRuntimeInfo
 
+from .hotfix.关闭模板示例媒体自动下载 import apply_template_media_patch
+
+apply_template_media_patch()
+
 # 启动日志
 logger.info("--------------------------------------------------------------------------------")
 logger.info("🎯石头版ComfyUI封装包及技术补丁  +Q群获取更新：33320584")

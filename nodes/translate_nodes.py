@@ -188,16 +188,23 @@ class ST_OfflineTranslator:
         languages = ["中文", "英语", "苗语"]
         return {
             "required": {
-                "文本": ("STRING", {"default": "", "multiline": True}),
-                "源语言": (languages, {"default": "中文"}),
-                "目标语言": (languages, {"default": "英语"}),
+                "文本": ("STRING", {"default": "", "multiline": True, "tooltip": "输入提示词或其他需要翻译的文本，也可以连接上游的字符串输出。"}),
+                "源语言": (languages, {"default": "中文", "tooltip": "选择原文的语言。所选方向需要有对应的 Argos Translate 语言模型。"}),
+                "目标语言": (languages, {"default": "英语", "tooltip": "选择译文语言。能否翻译取决于已安装的语言模型。"}),
             },
         }
 
     RETURN_TYPES = ("STRING",)
     FUNCTION = "translate"
     CATEGORY = "🎯 石头工具/文本编辑"
-    DESCRIPTION = "离线翻译节点，支持中文、英语和苗语之间的相互翻译"
+    DESCRIPTION = """接线与输出
+输入或接入要翻译的文本，选择原文语言和目标语言，译文可接提示词编码器或其他文本节点。
+
+语言选择
+下拉框提供中文、英语、苗语；实际能翻译的方向取决于已安装的 Argos Translate 语言模型。使用前安装对应语言包，英文到中文和中文到英文是不同的包。
+
+离线准备
+可将中英互译的 .argosmodel 文件放到 ST-tools/models，节点会尝试安装缺少的中英语包。依赖与语言包就绪后可离线翻译；缺少依赖时会尝试安装。"""
 
     def translate(self, 文本, 源语言, 目标语言):
         """执行翻译操作"""

@@ -25,10 +25,10 @@ class ST_FilterShader:
         
         return {
             "required": {
-                "图像": ("IMAGE",),
-                "加载滤镜": (shader_files, {"default": shader_files[0] if shader_files else ""}),
-                "调色模式": (color_space_list, {"default": "深度叠加"}),
-                "滤镜强度": ("FLOAT", {"default": 1.0, "min": 1.0, "max": 2.0, "step": 0.01}),
+                "图像": ("IMAGE", {"tooltip": "接入需要应用 LUT 调色的图像。"}),
+                "加载滤镜": (shader_files, {"default": shader_files[0] if shader_files else "", "tooltip": "选择 ST-tools/Shader 下的 .cube 文件。"}),
+                "调色模式": (color_space_list, {"default": "深度叠加", "tooltip": "深度叠加直接应用 LUT；柔光混合在对数空间处理。"}),
+                "滤镜强度": ("FLOAT", {"default": 1.0, "min": 1.0, "max": 2.0, "step": 0.01, "tooltip": "1.0 保持原图，2.0 混入 30% 的滤镜结果。"}),
             }
         }
     
@@ -41,7 +41,14 @@ class ST_FilterShader:
     RETURN_NAMES = ("图像",)
     FUNCTION = "run"
     CATEGORY = "🎯 石头工具/图像编辑"
-    DESCRIPTION = '图像滤镜节点\n\n滤镜文件来自 Shader 目录下的 .cube 文件，列表随目录自动更新。\n\n调色模式：\n- 深度叠加：LUT 直接叠加到原片\n- 柔光混合：对数空间应用 LUT，暗部过渡更自然\n\n滤镜强度：1.0 = 原片不变，2.0 = 滤镜效果最强（混入 30% LUT），推荐 1.2-1.5'
+    DESCRIPTION = """接线与滤镜文件
+接入图像并选择一个 .cube LUT。自定义 LUT 放在 ST-tools 的 Shader 文件夹中，刷新节点定义后可在列表中选择。
+
+模式、强度与输出
+「深度叠加」直接应用 LUT 后与原图混合。
+「柔光混合」在对数空间处理。
+强度 1.0 对应原图，2.0 对应混入 30% 滤镜结果，可从中间值开始调节。
+输出图像可继续调色、预览或保存。"""
 
     def run(self, **kwargs):
         """执行滤镜应用操作"""

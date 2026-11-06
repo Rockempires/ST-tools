@@ -39,7 +39,14 @@ class ST_ModelsLoader:
     RETURN_NAMES = ("模型", "CLIP", "VAE1", "VAE2")
     FUNCTION = "load_models"
     CATEGORY = "🎯 石头工具/基础流程"
-    DESCRIPTION = "同时加载UNET、CLIP和两个独立VAE。两路均选择时分别输出；只选择任一路时，两个VAE输出均提供已加载的模型。"
+    DESCRIPTION = """接线
+分别加载扩散模型（UNET）、CLIP 和 VAE。将模型接采样器或 LoRA 加载，将 CLIP 接提示词编码器，将 VAE 接编码或解码节点。
+
+加载选项
+UNET、CLIP 或 VAE 选择「无」可跳过该组件。CLIP 类型要匹配工作流的模型架构；「设备」只控制 CLIP 的加载设备，「权重类型」只用于 UNET。
+
+VAE 输出
+两个 VAE 都选时分别从 VAE1、VAE2 输出，可按工作流需要连接视频和音频 VAE。只选一路时，两个输出都提供同一个 VAE；两路选同一文件时只加载一次。"""
 
     def load_models(self, **kwargs):
         unet_name = kwargs.get("UNET模型")

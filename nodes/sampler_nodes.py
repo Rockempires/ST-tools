@@ -40,7 +40,18 @@ class ST_KSamplerWithVAE:
     RETURN_TYPES = ("LATENT", "IMAGE")
     FUNCTION = "run"
     CATEGORY = "🎯 石头工具/基础流程"
-    DESCRIPTION = "集成K采样器和VAE解码功能，一步生成图像。"
+    DESCRIPTION = """接线
+接入模型、正负条件、Latent 和匹配的 VAE。文生图可接空 Latent；图生图接已编码的图像 Latent；局部编辑可接带噪声遮罩的 Latent。
+
+采样参数
+种子决定起始噪声。
+步数决定去噪迭代次数。
+CFG 控制提示词引导强度。
+采样器和调度器分别决定去噪算法与噪声调度。优先使用模型或工作流推荐的组合。
+
+降噪与输出
+降噪 1.0 用于完整去噪；用已有 Latent 编辑时，较低值通常保留更多原始内容。
+输出采样后的 Latent 以及 VAE 解码后的图像，可分别接后续采样和图像处理。"""
 
     def run(self, 模型, 种子, 步数, CFG, 采样器名称, 调度器, 正面条件, 负面条件, Latent, 降噪, VAE, unique_id, save_preview=True, return_ui=True):
         # 开头先清 buffer 残留（防止上一次 KSampler 异常退出导致日志累加）

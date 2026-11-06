@@ -45,24 +45,31 @@ class ST_LoraStack:
     RETURN_NAMES = ("模型", "CLIP")
     FUNCTION = "load_loras"
     CATEGORY = "🎯 石头工具/基础流程"
-    DESCRIPTION = "按顺序加载 LoRA；总开关关闭时直接返回输入，保留各路开关和参数。"
+    DESCRIPTION = """接线与加载顺序
+接入模型，可选接入 CLIP。把「LoRA 数量」设为所需组数，逐组选择与模型匹配的 LoRA、填写强度并开启该组。按组号从小到大依次应用。
+
+开关与强度
+每组同一个强度用于模型及已连接的 CLIP。该组关闭、选择「无」或强度为 0 时跳过。总开关关闭或组数为 0 时，直接输出输入的模型和 CLIP。
+
+输出与联动
+将模型输出接采样器；如果输入了 CLIP，将 CLIP 输出接提示词编码器。LoRA 数量外接时，节点执行后会同步显示组数。"""
 
     @classmethod
     def INPUT_TYPES(cls):
         # 新参数为 optional，旧版接口工作流仍可直接执行。
         optional = _LoraInputs({
-            "总开关": ("BOOLEAN", {"default": True, "label_on": "开启", "label_off": "关闭"}),
+            "总开关": ("BOOLEAN", {"default": True, "label_on": "开启", "label_off": "关闭", "tooltip": "关闭后直接输出输入的模型和 CLIP，保留每组 LoRA 的设置。"}),
             "LoRA 数量": ("INT", {
                 "default": 1, "min": 0, "step": 1,
                 "tooltip": "设置显示的 LoRA 组数。可转换为输入；上游运行得到的数量在本节点执行时同步到界面，新增组默认不加载。",
             }),
-            "CLIP": ("CLIP", {"tooltip": "可选的 CLIP 模型。"}),
+            "CLIP": ("CLIP", {"tooltip": "可选。接入后启用的 LoRA 会同时尝试应用到模型和 CLIP，使用同一强度。"}),
         })
         for key in ("启用_1", "LoRA_1", "强度_1"):
             input_type, options = optional[key]
             optional[key] = (input_type, {**options, "socketless": True})
         return {
-            "required": {"模型": ("MODEL",)},
+            "required": {"模型": ("MODEL", {"tooltip": "接入需要应用 LoRA 的扩散模型。"})},
             "optional": optional,
             "hidden": {"unique_id": "UNIQUE_ID"},
         }

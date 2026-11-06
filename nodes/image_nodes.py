@@ -21,17 +21,17 @@ class ST_ImagePostProcessing:
         """定义节点输入参数"""
         return {
             "required": {
-                "图像": ("IMAGE",),
-                "亮度": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 2.0, "step": 0.01}),
-                "对比度": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 2.0, "step": 0.01}),
-                "饱和度": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 2.0, "step": 0.01}),
-                "Gamma": ("FLOAT", {"default": 1.0, "min": 0.01, "max": 2.0, "step": 0.01}),
-                "红色_青色": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 2.0, "step": 0.01}),
-                "绿色_洋红": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 2.0, "step": 0.01}),
-                "蓝色_黄色": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 2.0, "step": 0.01}),
-                "模糊_锐化": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 2.0, "step": 0.01}),
-                "HDR强度": ("FLOAT", {"default": 1.0, "min": 1.0, "max": 2.0, "step": 0.01}),
-                "自适应画质增强": ("BOOLEAN", {"default": False}),
+                "图像": ("IMAGE", {"tooltip": "接入要调色的单张图像或批次。"}),
+                "亮度": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 2.0, "step": 0.01, "tooltip": "1.0 为中性，降低压暗画面，提高提亮画面。"}),
+                "对比度": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 2.0, "step": 0.01, "tooltip": "1.0 为中性，降低减弱明暗差异，提高增强明暗差异。"}),
+                "饱和度": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 2.0, "step": 0.01, "tooltip": "1.0 为中性，降低减少色彩，提高让色彩更鲜艳。"}),
+                "Gamma": ("FLOAT", {"default": 1.0, "min": 0.01, "max": 2.0, "step": 0.01, "tooltip": "调整中间调。小于 1.0 压暗，大于 1.0 提亮，最小值为 0.01。"}),
+                "红色_青色": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 2.0, "step": 0.01, "tooltip": "以 1.0 为中性，沿红／青方向修正色偏。"}),
+                "绿色_洋红": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 2.0, "step": 0.01, "tooltip": "以 1.0 为中性，沿绿／洋红方向修正色偏。"}),
+                "蓝色_黄色": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 2.0, "step": 0.01, "tooltip": "以 1.0 为中性，沿蓝／黄方向修正色偏。"}),
+                "模糊_锐化": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 2.0, "step": 0.01, "tooltip": "小于 1.0 模糊，大于 1.0 锐化，1.0 关闭此项。"}),
+                "HDR强度": ("FLOAT", {"default": 1.0, "min": 1.0, "max": 2.0, "step": 0.01, "tooltip": "提高局部对比度。1.0 关闭此项，最高 2.0。"}),
+                "自适应画质增强": ("BOOLEAN", {"default": False, "tooltip": "开启后强化画面边缘与纹理，默认关闭。"}),
             },
             "hidden": {
                 "unique_id": "UNIQUE_ID"
@@ -41,7 +41,20 @@ class ST_ImagePostProcessing:
     RETURN_TYPES = ("IMAGE",)
     FUNCTION = "run"
     CATEGORY = "🎯 石头工具/图像编辑"
-    DESCRIPTION = "所有参数范围 0.0-2.0，1.0 为默认值（不改画面），步数 0.01\n\n亮度：调整图像明暗程度\n对比度：调整图像明暗对比\n饱和度：调整图像色彩鲜艳程度\nGamma：调整图像亮度曲线\n红色_青色：调整红色和青色平衡\n绿色_洋红：调整绿色和洋红平衡\n蓝色_黄色：调整蓝色和黄色平衡\n模糊_锐化：<1 模糊，>1 锐化\nHDR强度：增强局部对比度，1.0 保持原图，1-2 增加 HDR 强度\n自适应画质增强：增强图像边缘和纹理细节"
+    DESCRIPTION = """接线与默认值
+接入单张图或一批图像，输出调色后的图像。各数值为 1.0 时对应调整处于中性，自适应画质增强默认关闭。
+
+明暗与色彩
+亮度控制明暗。
+对比度控制明暗差异。
+饱和度控制色彩鲜艳程度。
+Gamma 范围 0.01～2.0，低于 1.0 压暗中间调，高于 1.0 提亮中间调。
+三个色彩平衡滑块用于校正红／青、绿／洋红和蓝／黄偏色。
+
+清晰度与局部对比度
+模糊／锐化低于 1.0 时模糊，高于 1.0 时锐化。
+HDR 强度范围 1.0～2.0，用于增强局部对比度。
+自适应画质增强用于强化边缘和纹理。"""
 
     def run(self, 图像, 亮度, 对比度, 饱和度, Gamma, 红色_青色, 绿色_洋红, 蓝色_黄色, 模糊_锐化, HDR强度, 自适应画质增强, unique_id, save_preview=True, return_ui=True):
         """执行图像处理操作"""

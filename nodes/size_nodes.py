@@ -42,19 +42,19 @@ class ST_ImageMaskLatentSize:
         
         return {
             "required": {
-                "自定义尺寸": ("BOOLEAN", {"default": False, "label_on": "开启", "label_off": "关闭"}),
-                "预设比例": (ratio_options, {"default": ratio_options[0] if ratio_options else "无可用比例"}),
-                "画面方向": (["横向", "竖向"], {"default": "横向"}),
-                "宽度": ("INT", {"default": 1024, "min": 64, "max": 8192, "step": 8}),
-                "高度": ("INT", {"default": 1024, "min": 64, "max": 8192, "step": 8}),
-                "缩放方式": (["中心裁剪", "等比缩放"], {"default": "中心裁剪"}),
-                "缩放倍数": ("FLOAT", {"default": 1.0, "min": 0.1, "max": 4.0, "step": 0.1}),
+                "自定义尺寸": ("BOOLEAN", {"default": False, "label_on": "开启", "label_off": "关闭", "tooltip": "开启后用填写的宽高作为目标尺寸。已有图像或 Latent 且选择等比缩放时，改用原尺寸乘倍数。"}),
+                "预设比例": (ratio_options, {"default": ratio_options[0] if ratio_options else "无可用比例", "tooltip": "关闭自定义尺寸时可选择预设画布；选「关闭」则从图像或 Latent 推导目标尺寸。"}),
+                "画面方向": (["横向", "竖向"], {"default": "横向", "tooltip": "决定预设画布的横向或竖向，不改变已填写的自定义宽高。"}),
+                "宽度": ("INT", {"default": 1024, "min": 64, "max": 8192, "step": 8, "tooltip": "自定义画布宽度（像素）。处理后会按 VAE 的下采样倍率向上对齐。"}),
+                "高度": ("INT", {"default": 1024, "min": 64, "max": 8192, "step": 8, "tooltip": "自定义画布高度（像素）。处理后会按 VAE 的下采样倍率向上对齐。"}),
+                "缩放方式": (["中心裁剪", "等比缩放"], {"default": "中心裁剪", "tooltip": "中心裁剪按目标比例裁掉边缘再缩放；等比缩放按原尺寸乘倍数，适用于图像或 Latent。"}),
+                "缩放倍数": ("FLOAT", {"default": 1.0, "min": 0.1, "max": 4.0, "step": 0.1, "tooltip": "仅在图像或 Latent 走等比缩放时使用，1.0 保持原始比例与大小，再做 VAE 对齐。"}),
             },
             "optional": {
-                "图像": ("IMAGE",),
-                "遮罩": ("MASK",),
-                "latent": ("LATENT",),
-                "vae": ("VAE",),
+                "图像": ("IMAGE", {"tooltip": "可选。接入后输出缩放图像；未接遮罩时同时输出全白遮罩。"}),
+                "遮罩": ("MASK", {"tooltip": "可选。随图像一起处理，或独立调整到输出画布。"}),
+                "latent": ("LATENT", {"tooltip": "可选。缩放已有潜变量；如果同时接入图像和 VAE，则改由图像编码生成 Latent。"}),
+                "vae": ("VAE", {"tooltip": "可选。提供空间下采样倍率，并在接入图像时对处理后的图像编码。"}),
             }
         }
     
@@ -62,7 +62,23 @@ class ST_ImageMaskLatentSize:
     RETURN_NAMES = ("图像", "遮罩", "latent", "宽度", "高度")
     FUNCTION = "run"
     CATEGORY = "🎯 石头工具/图像编辑"
-    DESCRIPTION = '处理优先级：\n 1. 尺寸优先级：自定义尺寸 > 预设尺寸 > 图像输出尺寸 > Latent 输入尺寸\n 2. 输入处理优先级：图像/遮罩输入 > Latent 输入\n处理方法：\n 中心裁剪：按目标比例裁剪中心调整大小\n 等比缩放：按目标比例乘以倍数等比缩放\n Latent：按目标比例调整大小（按VAE下采样倍率对齐，兼容2D/3D VAE）\n 遮罩不存在时：创建全白遮罩\n 预设覆盖 1:1/3:2/4:3/16:9/21:9，宽高均为16倍数；画面方向切竖向时交换宽高（1:1不变）\n 图像、遮罩、latent 均可改尺寸后输出；接入 VAE 时直接由图像编码得到 latent。'
+    DESCRIPTION = """接线与输出
+接入图像、遮罩或 Latent。输出处理后的数据和实际宽高（像素）。实际宽高向上对齐到 VAE 空间下采样倍率的整数倍。
+
+中心裁剪
+先按目标宽高比裁掉长边的两侧，再缩放到目标尺寸。
+处理图像或 Latent 时，以下目标尺寸优先级仅在中心裁剪模式生效：
+1. 开启自定义尺寸：使用填写的宽度和高度。
+2. 自定义尺寸关闭且选了预设比例：使用预设尺寸，横竖方向也只作用于预设。
+3. 两者都关闭：取图像尺寸，其次取 Latent 对应的像素尺寸，最后使用 1024×1024。
+
+等比缩放
+有图像时按原图宽高乘「缩放倍数」；只有 Latent 时按 Latent 对应的像素宽高乘该倍数。1.0 表示不主动放大或缩小，之后仍会做 VAE 对齐。
+仅接遮罩，或图像与 Latent 都未接入时，按目标尺寸处理。
+
+遮罩与 Latent
+有图像时，遮罩随图像处理；未接遮罩则输出全白遮罩。只有 Latent 时，可把外接遮罩调整到同一画布。
+同时接入图像和 VAE 时，Latent 由处理后的图像编码得到。否则使用已接入的 Latent 并调整尺寸；未接 Latent 时生成空 Latent。"""
 
     @staticmethod
     def _resolve_vae_unit_and_channels(kwargs):

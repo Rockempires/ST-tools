@@ -263,24 +263,36 @@ class ST_ImageEditor(io.ComfyNode):
             node_id="ST_ImageEditor",
             display_name="编辑图像",
             category="🎯 石头工具/图像编辑",
-            description="图像编码 / 文本编码一体化节点，无图像输入时可直接当文本编码器使用（VAE 也可不接）。\n\n三种模式：\n- flux2klein：左上放置，右下补边，纯文本编码\n- qwenedit-krea2：左上放置，右下补边，视觉编码+官方编辑模板\n- qwenimage21：自动检测——宽/高为0或与图像1同尺寸走纯编辑（官方节点编码，对齐节点放大回原图）；与图像1尺寸不同走居中补黑扩图（输出即输入画布尺寸）\n\n等比缩放、兰佐斯插值、按VAE下采样倍率对齐；可选遮罩白色重绘黑色保留。\n\n输出：正面/负面提示词编码、latent、补边信息（供编辑对齐节点裁剪）。",
+            description="""接线与参考图
+接入与模式匹配的 CLIP；用参考图编辑时接入匹配的 VAE 以生成参考 Latent。可接多张参考图。无参考图时可用于文生图，VAE 输入可省略。
+
+Flux 2 Klein 与 Qwen Image Krea2
+flux2klein 使用文本编码，qwenedit-krea2 使用视觉编码和编辑模板；两者都将参考图放在画布左上角并在右下补边，目标宽高请填至少 32。
+
+QwenImage 2.1
+qwenimage21 用首张已连接参考图判断编辑或扩图。宽高任一为 0，或目标尺寸与参考图各自取整到 32 的倍数后相同，则走普通编辑。否则将参考图居中补边至目标画布。无参考图时，宽或高填 0 的对应边按 1024 处理。
+
+遮罩与输出
+可选遮罩：白色区域参与重绘，黑色区域限制去噪。
+将正面、负面和 Latent 输出接采样器；解码后把图像与本节点的补边信息一起接「编辑对齐」，恢复原图或目标画布尺寸。""",
             inputs=[
                 io.Clip.Input("clip", display_name="CLIP模型"),
                 io.Vae.Input("vae", display_name="VAE模型", optional=True,
-                             tooltip="可选。不接时不产出参考 latent；纯文生图无需连接。"),
+                             tooltip="可选。图像编辑时接入匹配的 VAE 以生成参考 Latent；纯文生图可省略。"),
                 io.Autogrow.Input("图片", template=image_template,
                                   tooltip="可选。不接图片时本节点作为纯文本编码器使用。"),
                 io.Mask.Input("mask", display_name="遮罩", optional=True,
-                              tooltip="可选。白色区域重绘、黑色区域保留原图；输出 latent 自带 noise_mask（需把 latent 接入采样器）。"),
+                              tooltip="可选。白色区域参与重绘，黑色区域限制去噪。将带噪声遮罩的 Latent 接入采样器。"),
                 io.String.Input("正面提示词", multiline=True, dynamic_prompts=True),
                 io.String.Input("负面提示词", multiline=True, dynamic_prompts=True),
                 io.Combo.Input("对齐模式",
                                options=["flux2klein", "qwenedit-krea2", "qwenimage21"],
-                               default="flux2klein"),
+                               default="flux2klein",
+                               tooltip="按模型选择 Flux 2 Klein、Qwen Image Krea2 或 QwenImage 2.1 的处理模式。"),
                 io.Int.Input("生成图像宽度", default=1024, min=0, max=16384, step=8,
-                             tooltip="qwenimage21模式：宽/高任一填0、或与图像1同尺寸→纯编辑（输出=图像1原尺寸）；宽高都>0且与图像1不同→图像1居中补黑扩图，此值即输出画布宽。flux2klein/qwenedit-krea2模式：目标画布宽，需≥32，勿填0。"),
+                             tooltip="qwenimage21：有参考图时宽高任一填 0，或按 32 对齐后与首张参考图尺寸相同，即普通编辑；否则用填写的宽高作为扩图目标。无图时此项填 0 按 1024 处理。其他模式请填至少 32。"),
                 io.Int.Input("生成图像高度", default=1024, min=0, max=16384, step=8,
-                             tooltip="qwenimage21模式：宽/高任一填0、或与图像1同尺寸→纯编辑（输出=图像1原尺寸）；宽高都>0且与图像1不同→图像1居中补黑扩图，此值即输出画布高。flux2klein/qwenedit-krea2模式：目标画布高，需≥32，勿填0。"),
+                             tooltip="qwenimage21：有参考图时宽高任一填 0，或按 32 对齐后与首张参考图尺寸相同，即普通编辑；否则用填写的宽高作为扩图目标。无图时此项填 0 按 1024 处理。其他模式请填至少 32。"),
             ],
             outputs=[
                 io.Conditioning.Output("正面输出"),
@@ -651,8 +663,8 @@ class ST_ImageSizeAligner:
     def INPUT_TYPES(cls):
         return {
             "required": {
-                "补边信息": ("ANY", ),
-                "生成图像": ("IMAGE", ),
+                "补边信息": ("ANY",  {"tooltip": "接同一次「编辑图像」的补边信息，用来恢复输出尺寸。"}),
+                "生成图像": ("IMAGE",  {"tooltip": "接采样后经 VAE 解码的图像。"}),
             },
         }
 
@@ -660,7 +672,11 @@ class ST_ImageSizeAligner:
     RETURN_NAMES = ("对齐后图像",)
     FUNCTION = "align"
     CATEGORY = "🎯 石头工具/图像编辑"
-    DESCRIPTION = "接收编辑图像节点的补边信息，把K采样器输出还原到目标尺寸：纯编辑放大回图像1原尺寸，扩图对齐到所填画布尺寸，必要时裁掉补边区。串在VAE解码之后。"
+    DESCRIPTION = """接线
+将采样结果经 VAE 解码后的图像接入本节点，并把同一次「编辑图像」执行的「补边信息」接过来。
+
+尺寸恢复与输出
+普通编辑按记录恢复参考图原尺寸；扩图按记录恢复目标画布尺寸。其他带补边的编辑按记录裁掉补边再还原。输出是处理后的图像，可接预览或保存。"""
 
     def align(self, 补边信息, 生成图像):
         # 目标尺寸优先级：orig_w/h（纯编辑放大回图像1原尺寸）> target_w/h（画布输入尺寸）

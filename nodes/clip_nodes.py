@@ -24,7 +24,11 @@ class ST_CLIPTextEncoder:
     RETURN_NAMES = ("正面条件", "负面条件", "负面条件零化")
     FUNCTION = "encode"
     CATEGORY = "🎯 石头工具/基础流程"
-    DESCRIPTION = "合并CLIP文本编码功能，同时处理正向和负向提示词。"
+    DESCRIPTION = """接线与提示词
+接入与扩散模型匹配的 CLIP，分别填写希望生成的内容和希望抑制的内容。将「正面条件」和「负面条件」接采样器对应输入。
+
+负面条件零化
+「负面条件零化」从负面编码生成零化条件；需要零化负面条件的工作流可以用它替代普通负面条件。留空负向提示词仍会编码空文本。"""
 
     def encode(self, CLIP, 正向提示词, 负向提示词):
         try:
