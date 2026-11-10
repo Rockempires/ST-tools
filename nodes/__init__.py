@@ -1,6 +1,7 @@
 from .size_nodes import ST_ImageMaskLatentSize
 from .translate_nodes import ST_OfflineTranslator
 from .image_nodes import ST_ImagePostProcessing
+from .ca_nodes import ST_ChromaticAberration
 from .color_nodes import ST_FilterShader
 from .edit_nodes import ST_ImageEditor, ST_ImageSizeAligner
 from .model_nodes import ST_ModelsLoader
@@ -16,6 +17,7 @@ __all__ = [
     "ST_ImageMaskLatentSize",
     "ST_KSamplerWithVAE",
     "ST_ImagePostProcessing",
+    "ST_ChromaticAberration",
     "ST_FilterShader",
     "ST_ImageEditor",
     "ST_ImageSizeAligner",

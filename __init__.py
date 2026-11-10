@@ -121,7 +121,7 @@ def _ensure_requirements():
 # 立即尝试保证依赖（在导入节点前运行）
 _ensure_requirements()
 
-from .nodes import ST_ImageMaskLatentSize, ST_OfflineTranslator, ST_ImagePostProcessing, ST_FilterShader, ST_ImageEditor, ST_ImageSizeAligner, ST_ModelsLoader, ST_LoraStack, ST_KSamplerWithVAE, ST_CLIPTextEncoder, ST_DLSSNRImage, ST_DLSSNRVideo, ST_DLSSNRRuntimeInfo
+from .nodes import ST_ImageMaskLatentSize, ST_OfflineTranslator, ST_ImagePostProcessing, ST_ChromaticAberration, ST_FilterShader, ST_ImageEditor, ST_ImageSizeAligner, ST_ModelsLoader, ST_LoraStack, ST_KSamplerWithVAE, ST_CLIPTextEncoder, ST_DLSSNRImage, ST_DLSSNRVideo, ST_DLSSNRRuntimeInfo
 
 from .hotfix.关闭模板示例媒体自动下载 import apply_template_media_patch
 
@@ -338,6 +338,7 @@ NODE_CLASS_MAPPINGS = {
     "ST_ImageMaskLatentSize": ST_ImageMaskLatentSize,
     "ST_KSamplerWithVAE": ST_KSamplerWithVAE,
     "ST_ImagePostProcessing": ST_ImagePostProcessing,
+    "ST_ChromaticAberration": ST_ChromaticAberration,
     "ST_FilterShader": ST_FilterShader,
     "ST_ImageEditor": ST_ImageEditor,
     "ST_ImageSizeAligner": ST_ImageSizeAligner,
@@ -354,6 +355,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "ST_ImageMaskLatentSize": "图像尺寸",
     "ST_KSamplerWithVAE": "解码采样器",
     "ST_ImagePostProcessing": "图像调色",
+    "ST_ChromaticAberration": "色散效果",
     "ST_FilterShader": "图像滤镜",
     "ST_ImageEditor": "编辑图像",
     "ST_ImageSizeAligner": "编辑对齐",
